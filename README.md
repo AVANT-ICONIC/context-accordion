@@ -1,10 +1,48 @@
-# context-accordion
+<div align="center">
 
-> Token-efficient, layered context delivery for AI agents.
+<img src="https://capsule-render.vercel.app/api?type=waving&height=250&color=0:000000,40:7f1d1d,75:ea580c,100:f59e0b&text=CONTEXT%20ACCORDION&fontColor=ffffff&fontSize=48&fontAlignY=35&desc=by%20HARBOR&descSize=15&descAlignY=52&animation=scaleIn" alt="Header" width="100%" />
 
-Context is always available — just collapsed by default. Like an accordion: all the notes exist, you only press the ones you need right now.
+<br />
 
-Built by the [Harbor](https://github.com/harbor-office/harbor) team. Inspired by the problem of agents drowning in context they didn't ask for.
+<img src="https://readme-typing-svg.demolab.com?font=Inter&weight=600&size=22&pause=1200&color=f59e0B&center=true&vCenter=true&width=980&lines=Token-efficient,+layered+context+for+AI+agents.;Context+is+always+available+%E2%80%94+just+collapsed+by+default.;Four+memory+tiers:+Identity,+Session,+Experience,+Archive." alt="Typing SVG" />
+
+<br />
+<br />
+
+<p align="center">
+  <a href="#the-problem"><img src="https://img.shields.io/badge/the%20problem-7f1d1d?style=for-the-badge&logo=readme&logoColor=white" alt="The Problem" /></a>
+  <a href="#the-solution"><img src="https://img.shields.io/badge/the%20solution-c2410c?style=for-the-badge&logo=lightbulb&logoColor=white" alt="The Solution" /></a>
+  <a href="#quick-start"><img src="https://img.shields.io/badge/quick%20start-ea580c?style=for-the-badge&logo=rocket&logoColor=white" alt="Quick Start" /></a>
+  <a href="#api"><img src="https://img.shields.io/badge/api-d97706?style=for-the-badge&logo=code&logoColor=white" alt="API" /></a>
+  <a href="#adapters"><img src="https://img.shields.io/badge/adapters-f59e0b?style=for-the-badge&logo=plug&logoColor=white" alt="Adapters" /></a>
+  <a href="#contributing"><img src="https://img.shields.io/badge/contributing-fbbf24?style=for-the-badge&logo=githubsponsors&logoColor=white" alt="Contributing" /></a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/TypeScript-5.0+-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
+  <img src="https://img.shields.io/badge/Node.js-18+-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js" />
+  <img src="https://img.shields.io/badge/License-MIT-f59e0b?style=flat-square&logo=opensourceinitiative&logoColor=white" alt="MIT" />
+  <img src="https://img.shields.io/badge/version-0.1.0-f59e0b?style=flat-square" alt="version" />
+</p>
+
+<p align="center">
+  <strong>context-accordion</strong> gives AI agents token-efficient, layered context delivery.<br />
+  Context is always available — just collapsed by default. Like an accordion: all the notes exist, you only press the ones you need.
+</p>
+
+<p align="center">
+  <a href="#installation">Installation</a>
+  ·
+  <a href="#quick-start">Quick Start</a>
+  ·
+  <a href="#api">API Reference</a>
+  ·
+  <a href="https://github.com/harbor-office/context-accordion/discussions">Discussions</a>
+  ·
+  <a href="https://github.com/harbor-office/context-accordion/issues">Issues</a>
+</p>
+
+</div>
 
 ---
 
@@ -17,6 +55,8 @@ Every AI agent framework today does one of two things:
 
 Both are wrong. The full content should never be discarded — it should be *collapsed*, retrievable on demand.
 
+---
+
 ## The Solution: Context Accordion
 
 Four memory tiers. Each tier is always available but only loaded when needed:
@@ -28,21 +68,14 @@ L2  Experience     — loaded on start  ~1000 tokens   what have I learned befor
 L3  Archive        — retrieved        ~1500 tokens   what happened in similar past runs
 ```
 
-The agent starts with L0 + L1. It can expand L2 and L3 at any point during a run. Budget enforcement ensures the total never exceeds the model's context window.
-
-With the Accordion, you start at ~500 tokens (L0+L1) vs ~5000+ for a naive dump.
-The agent expands tiers on-demand, typically adding 500-2000 tokens when needed.
-
-This is different from RAG. RAG retrieves documents. The Accordion retrieves *structured context tiers* — each with a known token budget, priority, and expansion policy.
+With the Accordion, you start at ~500 tokens (L0+L1) vs ~5000+ for a naive dump. The agent expands tiers on-demand, typically adding 500-2000 tokens when needed.
 
 ---
 
-## Install
+## Installation
 
 ```bash
 npm install context-accordion
-# or
-bun add context-accordion
 ```
 
 ---
@@ -113,30 +146,29 @@ All expansion events are logged so you can see exactly what context the agent ac
 
 ## Token Budget Enforcement
 
-Packets are priority-ordered. If the total exceeds `maxTokens`, lower-priority packets are truncated or dropped — never the identity or active task.
+The composer enforces a token budget by dropping lower-priority packets first:
 
-```
-Priority order (highest → lowest):
-100  Identity      — never dropped
-90   Handoff       — dropped last
-85   Experience    — dropped before handoff
-80   Task/Issue    — never dropped
-70   Goal          — dropped before task
-60   Repository    — dropped before goal
-50   Archive       — dropped first
-```
+- **Identity** (priority 100) — never dropped
+- **Handoff** (priority 90) — agent-to-agent continuity
+- **Experience** (priority 85) — learned lessons
+- **Task** (priority 80) — never dropped
+- **Goal** (priority 70) — broader objective
+- **Repo** (priority 60) — codebase context
+- **Archive** (priority 50) — prior similar tasks
+
+When budget is exceeded, lower-priority packets are dropped. If partial space remains (200+ tokens), packets are truncated rather than dropped.
 
 ---
 
 ## Vector Store (L3 Archive)
 
-The archive tier uses Qdrant for semantic retrieval of relevant prior tasks. When an agent starts a new task, the top-N most similar past tasks are retrieved and injected as context.
+Store completed tasks for semantic retrieval:
 
 ```typescript
-// Index a completed task
+// After task completion, index the run
 await composer.index({
   taskId: 'issue-123',
-  content: 'Fixed auth bug by extending JWT expiry...',
+  content: 'Fixed authentication bug by...',
   metadata: { type: 'bug', resolution: 'fixed' },
 })
 
@@ -167,76 +199,79 @@ const composer = new AccordionComposer({
 
 Works with any agent framework:
 
-```typescript
-// LangChain
-import { toDocuments, toSystemMessage } from 'context-accordion/langchain'
-const docs = toDocuments(bundle)
+### Vercel AI SDK
 
-// Vercel AI SDK
+```typescript
 import { accordionSystemPrompt } from 'context-accordion/ai-sdk'
 
-// Raw string (any framework)
-const systemPrompt = composer.render(bundle)
-```
-
----
-
-## Experience Distillation (L2)
-
-The L2 tier is a plain markdown file that accumulates learned lessons over time. You write to it however you want — manually, or via an automated distillation loop:
-
-```typescript
-import { distill } from 'context-accordion/distill'
-
-// After a batch of runs, distill lessons into experience.md
-await distill({
-  runs: recentFailedRuns,
-  experiencePath: './agents/builder/experience.md',
-  model: 'ollama/deepseek-r1:8b', // cheap local model is fine
+const { text } = await generateText({
+  model: openai('gpt-4o'),
+  system: accordionSystemPrompt(bundle),
+  prompt: userMessage,
 })
 ```
 
----
-
-## Configuration
+### LangChain
 
 ```typescript
-const composer = new AccordionComposer({
-  maxTokens: 8000,           // default token budget
-  cacheTtl: 300_000,         // ms — cache static packets (default: 5 min)
-  vectorStore: {
-    url: 'http://localhost:6333',
-    collection: 'tasks',
-    vectorSize: 1536,
-  },
-  onExpand: (event) => {     // hook — log expansion events
-    console.log(`Agent expanded ${event.tier}: ${event.reason}`)
-  },
-})
+import { toDocuments, toSystemMessage } from 'context-accordion/langchain'
+
+const docs = toDocuments(bundle)
+// Use with LangChain's RetrievalQAChain
+
+const systemMessage = toSystemMessage(bundle)
+// Use as SystemMessage in chat chains
 ```
 
 ---
 
-## Why not just use a long context window?
+## API Reference
 
-You could. But:
-- Long context = slower inference, higher cost
-- Models attend poorly to content buried in the middle of huge prompts
-- You lose visibility into what context the agent actually used
-- Budget enforcement forces you to think about what context actually matters
+### AccordionComposer
 
-The Accordion gives you the best of both worlds: full recall when needed, minimal tokens by default.
+```typescript
+new AccordionComposer(config?)
+```
+
+**Config:**
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `maxTokens` | `number` | `8000` | Default token budget |
+| `cacheTtl` | `number` | `300000` | Static cache TTL in ms |
+| `vectorStore` | `object` | - | Qdrant config |
+| `embeddingProvider` | `object` | - | Ollama or OpenAI |
+| `onExpand` | `function` | - | Expansion event callback |
+
+### Methods
+
+- `compose(agent, task, options?)` — Build a bundle
+- `expand(bundle, options)` — Expand a tier on-demand
+- `render(bundle)` — Render to string
+- `index(options)` — Store task in archive
+- `clearSessionCache()` — Clear session cache
 
 ---
 
 ## License
 
-MIT — use it in anything, commercial or otherwise.
+MIT — see [LICENSE](./LICENSE)
 
 ---
 
-## Contributing
+## Built by AVANT-ICONIC
 
-See [CONTRIBUTING.md](./CONTRIBUTING.md). PRs welcome.
+Built by [AVANT-ICONIC](https://avant-iconic.com). Inspired by the problem of agents drowning in context they didn't ask for.
 
-Built with ❤️ by the Harbor team.
+---
+
+<div align="center">
+
+<strong>Context is always available — just collapsed by default.</strong>
+
+<br />
+<br />
+
+<img src="https://capsule-render.vercel.app/api?type=waving&section=footer&height=130&color=0:f59e0b,50:ea580c,100:000000" alt="Footer" width="100%" />
+
+</div>

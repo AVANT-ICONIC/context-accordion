@@ -13,7 +13,14 @@
     "rag",
     "token-efficiency",
     "context-window",
-    "orchestration"
+    "orchestration",
+    "memory",
+    "prompt",
+    "openai",
+    "langchain",
+    "embedding",
+    "vector-store",
+    "qdrant"
   ],
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
@@ -86,5 +93,9 @@
   "homepage": "https://github.com/harbor-office/context-accordion#readme",
   "bugs": {
     "url": "https://github.com/harbor-office/context-accordion/issues"
+  },
+  "funding": {
+    "type": "github",
+    "url": "https://github.com/sponsors/harbor-office"
   }
 }
