@@ -22,7 +22,8 @@
   <img src="https://img.shields.io/badge/TypeScript-5.0+-3178C6?style=flat-square&logo=typescript&logoColor=white" alt="TypeScript" />
   <img src="https://img.shields.io/badge/Node.js-18+-339933?style=flat-square&logo=nodedotjs&logoColor=white" alt="Node.js" />
   <img src="https://img.shields.io/badge/License-MIT-f59e0b?style=flat-square&logo=opensourceinitiative&logoColor=white" alt="MIT" />
-  <img src="https://img.shields.io/badge/version-0.1.0-f59e0b?style=flat-square" alt="version" />
+  <img src="https://img.shields.io/badge/version-0.1.0--alpha-f59e0b?style=flat-square" alt="version" />
+  <img src="https://img.shields.io/badge/status-alpha-red?style=flat-square" alt="alpha" />
 </p>
 
 <p align="center">
@@ -69,6 +70,64 @@ L3  Archive        — retrieved        ~1500 tokens   what happened in similar 
 ```
 
 With the Accordion, you start at ~500 tokens (L0+L1) vs ~5000+ for a naive dump. The agent expands tiers on-demand, typically adding 500-2000 tokens when needed.
+
+---
+
+## ⚠️ Alpha Status
+
+This package is in **alpha** status. The API may change in breaking ways between minor versions (0.x.x) until we reach 1.0.0 stability.
+
+**Breaking changes policy:**
+- We will document breaking changes in [CHANGELOG.md](./CHANGELOG.md)
+- For Harbor integration stability, pin to a specific version tag
+
+---
+
+## Public API Surface
+
+The public API is exported from the main entry point and subpath exports.
+
+### Stable (recommended)
+| Export | Description |
+|--------|-------------|
+| `AccordionComposer` | Main class for context composition |
+| `OllamaEmbedding`, `OpenAIEmbedding` | Embedding providers |
+| Types (AccordionBundle, AccordionPacket, AgentConfig, TaskContext, etc.) | TypeScript interfaces |
+
+### Alpha (may change until 1.0.0)
+| Export | Description |
+|--------|-------------|
+| `estimateTokens`, `enforceBudget`, `TIER_PRIORITY` | Budget utilities |
+| `distill` | Experience distillation helper |
+
+### Wrapper Boundary — Framework Integration
+
+Framework adapters are the **official integration boundary** for external frameworks. 
+Use these instead of manually processing `AccordionBundle`:
+
+| Subpath | Export | Purpose |
+|---------|--------|---------|
+| `context-accordion/ai-sdk` | `accordionSystemPrompt(bundle)` | Renders bundle as system prompt for Vercel AI SDK |
+| `context-accordion/langchain` | `toDocuments(bundle)` | Converts bundle to LangChain Documents |
+| `context-accordion/langchain` | `toSystemMessage(bundle)` | Renders bundle as single string for system message |
+
+**Why use adapters?** They handle framework-specific formatting and are the 
+officially supported integration points. The core `AccordionComposer` is 
+framework-agnostic — adapters translate between the abstract bundle format 
+and your framework of choice.
+
+For Harbor integration, use these adapters rather than processing bundles directly.
+
+### Internal (Not for Direct Use)
+
+The following are internal implementation details — do not rely on them:
+- Private methods on `AccordionComposer` (e.g., `buildIdentityPacket`, `retrieveArchive`)
+- Static cache state (`AccordionComposer.cache`) — shared across instances
+- Internal type definitions not exported from index.ts
+- Budget utilities (`enforceBudget`, `estimateTokens`, `TIER_PRIORITY`) — marked as `@alpha`
+
+**Harbor consumers:** Pin to specific version tags and use the wrapper adapters 
+for framework integration.
 
 ---
 
