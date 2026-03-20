@@ -1,6 +1,6 @@
 {
   "name": "context-accordion",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "description": "Token-efficient, layered context delivery for AI agents. Context is always available — just collapsed by default.",
   "author": "AVANT-ICONIC",
   "license": "MIT",
@@ -20,11 +20,16 @@
     "langchain",
     "embedding",
     "vector-store",
-    "qdrant"
+    "qdrant",
+    "alpha"
   ],
   "main": "./dist/index.js",
   "module": "./dist/index.mjs",
   "types": "./dist/index.d.ts",
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -95,5 +100,5 @@
   "homepage": "https://github.com/AVANT-ICONIC/context-accordion#readme",
   "bugs": {
     "url": "https://github.com/AVANT-ICONIC/context-accordion/issues"
-  },
+  }
 }

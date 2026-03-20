@@ -1,0 +1,64 @@
+[
+  {
+    "issue_id": "ISSUE-1",
+    "title": "Stabilize core AccordionComposer and Budget APIs",
+    "description": "Refactor AccordionComposer and budget.ts to ensure API stability and robustness. Lock down @alpha interfaces and improve input validation.",
+    "acceptance_criteria": [
+      "Promote stable parts of budget.ts and distill from @alpha to stable or define a clear roadmap",
+      "Implement custom tokenizer support in estimateTokens via AccordionConfig",
+      "Fix enforceBudget to strictly respect maxTokens even with 'never drop' packets by truncating further if necessary",
+      "Add input validation for agent and task in AccordionComposer.compose()"
+    ],
+    "dependencies": [],
+    "estimated_complexity": "medium",
+    "suggested_assignee": "Builder"
+  },
+  {
+    "issue_id": "ISSUE-2",
+    "title": "Harden framework adapters (AI SDK, LangChain) for production use",
+    "description": "Improve the robustness of ai-sdk and langchain adapters. Add input validation, handle empty bundles, and improve metadata mapping.",
+    "acceptance_criteria": [
+      "accordionSystemPrompt returns an empty string for empty bundles instead of potentially failing",
+      "toDocuments handles missing metadata gracefully and uses totalTokens if available for estimation",
+      "Unit tests for both adapters cover edge cases like empty packets and missing fields",
+      "All adapter exports are correctly typed and documented in API.md"
+    ],
+    "dependencies": [
+      "ISSUE-1"
+    ],
+    "estimated_complexity": "small",
+    "suggested_assignee": "Builder"
+  },
+  {
+    "issue_id": "ISSUE-2",
+    "title": "Improve resource management and concurrency safety in AccordionComposer",
+    "description": "Address potential memory leaks in the static cache and ensure expand() is safe for concurrent calls.",
+    "acceptance_criteria": [
+      "Add a size limit or TTL-based cleanup to the static AccordionComposer.cache to prevent memory leaks",
+      "Ensure expand() handles concurrent requests for the same tier/reason without duplicate packets or race conditions",
+      "Provide a method to clear the global static cache if needed",
+      "Add tests for concurrent expand() calls and cache eviction"
+    ],
+    "dependencies": [
+      "ISSUE-1"
+    ],
+    "estimated_complexity": "medium",
+    "suggested_assignee": "Builder"
+  },
+  {
+    "issue_id": "ISSUE-3",
+    "title": "Prepare context-accordion for 0.1.0 stable/beta release",
+    "description": "Finalize documentation, ensure CI/CD is green, and perform a final API audit before release.",
+    "acceptance_criteria": [
+      "Complete API.md with full documentation of all public classes and methods",
+      "Update README.md with clear integration examples for Harbor",
+      "All tests pass with 90%+ coverage",
+      "Verify package.json exports and types are correctly mapped for consumer projects"
+    ],
+    "dependencies": [
+      "ISSUE-2"
+    ],
+    "estimated_complexity": "small",
+    "suggested_assignee": "Reviewer"
+  }
+]

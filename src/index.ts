@@ -5,7 +5,7 @@
  * This package is in **alpha** status (version 0.x.x). The API may change in 
  * breaking ways between minor releases until we reach 1.0.0 stability.
  * 
- * For Harbor integration stability, pin to a specific version tag.
+ * **For Harbor integration stability, pin to a specific version tag.**
  * 
  * ## Public API Surface
  * 
@@ -14,7 +14,7 @@
  * - Types: AccordionBundle, AccordionPacket, AgentConfig, TaskContext, etc.
  * - `OllamaEmbedding`, `OpenAIEmbedding` — Embedding providers
  * 
- * ### Alpha (may change without notice)
+ * ### Alpha (may change without notice) — Use with caution
  * - `enforceBudget`, `estimateTokens`, `TIER_PRIORITY` — Budget utilities
  * - `distill` — Experience distillation module
  * 
@@ -26,17 +26,19 @@
  * ## Wrapper Boundary — Framework Integration
  * 
  * Framework adapters are the **official integration boundary** for external 
- * frameworks. Use these instead of manually processing AccordionBundle:
+ * frameworks and Harbor consumers. Use these instead of manually processing AccordionBundle:
  * 
- * | Subpath | Purpose |
- * |---------|---------|
- * | `context-accordion/ai-sdk` | Renders bundle for Vercel AI SDK (`accordionSystemPrompt`) |
- * | `context-accordion/langchain` | Converts to LangChain Documents (`toDocuments`, `toSystemMessage`) |
- * | `context-accordion/distill` | Experience distillation from failed runs |
- * | `context-accordion/embeddings` | Embedding providers (OllamaEmbedding, OpenAIEmbedding) |
+ * | Subpath | Export | Purpose |
+ * |---------|--------|---------|
+ * | `context-accordion/ai-sdk` | `accordionSystemPrompt(bundle)` | Renders bundle for Vercel AI SDK |
+ * | `context-accordion/langchain` | `toDocuments(bundle)`, `toSystemMessage(bundle)` | LangChain integration |
+ * | `context-accordion/distill` | `distill(options)` | Experience distillation |
+ * | `context-accordion/embeddings` | `OllamaEmbedding`, `OpenAIEmbedding` | Embedding providers |
  * 
  * The core `AccordionComposer` is framework-agnostic. Framework integrations 
- * should use these adapters rather than processing bundles directly.
+ * and Harbor wrappers MUST use these adapters rather than processing bundles directly.
+ * 
+ * **Harbor Integration Rule:** Do not access `bundle.packets` directly. Use adapters.
  * 
  * @packageDocumentation
  */
