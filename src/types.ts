@@ -1,6 +1,12 @@
-// context-accordion — core types
+// context-accordion - core types
 
 export type TierLevel = 'identity' | 'task' | 'goal' | 'repo' | 'handoff' | 'experience' | 'archive'
+
+export interface AccordionPacketMetadata {
+  source: string
+  whySelected: string
+  score?: number
+}
 
 export interface AccordionPacket {
   id: string
@@ -8,9 +14,22 @@ export interface AccordionPacket {
   priority: number      // higher = kept first when budget is tight
   maxTokens: number
   content: string
-  summary: string       // compact version — shown when tier is collapsed
+  summary: string       // compact version - shown when tier is collapsed
   expanded: boolean     // whether full content is loaded
   createdAt: Date
+  metadata?: AccordionPacketMetadata
+}
+
+export interface AccordionTraceEntry {
+  timestamp: Date
+  stage: 'compose' | 'expand' | 'budget'
+  action: 'selected' | 'cached' | 'skipped' | 'expanded' | 'dropped' | 'truncated'
+  tier: TierLevel
+  packetId?: string
+  source: string
+  reason: string
+  tokenEstimate?: number
+  score?: number
 }
 
 export interface AccordionBundle {
@@ -21,6 +40,7 @@ export interface AccordionBundle {
   totalTokens: number
   maxTokens: number
   expansionLog: ExpansionEvent[]
+  trace: AccordionTraceEntry[]
 }
 
 export interface ExpansionEvent {
@@ -32,8 +52,8 @@ export interface ExpansionEvent {
 
 export interface AgentConfig {
   id: string
-  identity: string                // L0 — who the agent is
-  experiencePath?: string         // L2 — path to experience.md file
+  identity: string                // L0 - who the agent is
+  experiencePath?: string         // L2 - path to experience.md file
   maxTokens?: number              // token budget for this agent
 }
 
@@ -118,6 +138,6 @@ export interface IndexTaskOptions {
 export interface ExpandOptions {
   tier: TierLevel
   reason: string
-  limit?: number                  // for archive tier: how many results
-  experiencePath?: string        // for experience tier: path to experience.md
+  limit?: number           // for archive tier: how many results
+  experiencePath?: string  // for experience tier: path to experience.md
 }

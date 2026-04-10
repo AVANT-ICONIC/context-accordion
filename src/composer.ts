@@ -8,6 +8,7 @@ import type {
   AccordionBundle,
   AccordionConfig,
   AccordionPacket,
+  AccordionTraceEntry,
   AgentConfig,
   ComposeOptions,
   ExpandOptions,
@@ -22,6 +23,11 @@ import type {
 
 const DEFAULT_MAX_TOKENS = 8000
 const DEFAULT_CACHE_TTL = 1000 * 60 * 5 // 5 minutes
+const DEFAULT_CACHE_MAX_SIZE = 1000
+const DEFAULT_AGENT_ID = 'unknown-agent'
+const DEFAULT_AGENT_IDENTITY = 'You are an AI agent.'
+const DEFAULT_TASK_ID = 'unknown-task'
+const DEFAULT_TASK_TITLE = 'Untitled task'
 
 export class AccordionComposer {
   private config: AccordionConfig
@@ -29,7 +35,7 @@ export class AccordionComposer {
   private sessionCache: Map<string, AccordionPacket> = new Map()
 
   // Static cache shared across instances — keyed by content hash
-  private static cache: Map<string, { packet: AccordionPacket; expires: number }> = new Map()
+  private static cache: Map<string, { packet: AccordionPacket; expires: number; createdAt: number }> = new Map()
 
   /**
    * Creates a new AccordionComposer instance.
@@ -66,50 +72,94 @@ export class AccordionComposer {
     task: TaskContext,
     options: ComposeOptions = {}
   ): Promise<AccordionBundle> {
-    const maxTokens = options.maxTokens ?? agent.maxTokens ?? this.config.maxTokens ?? DEFAULT_MAX_TOKENS
+    const normalizedAgent = this.normalizeAgentConfig(agent)
+    const normalizedTask = this.normalizeTaskContext(task)
+    const maxTokens =
+      this.normalizePositiveInteger(options.maxTokens)
+      ?? normalizedAgent.maxTokens
+      ?? this.normalizePositiveInteger(this.config.maxTokens)
+      ?? DEFAULT_MAX_TOKENS
     const packets: AccordionPacket[] = []
+    const trace: AccordionTraceEntry[] = []
 
     // L0 — Identity (always loaded, highest priority)
-    const identityPacket = this.getCached(`identity:${agent.id}`)
-      ?? this.buildIdentityPacket(agent)
-    this.setCache(`identity:${agent.id}`, identityPacket)
+    const cachedIdentityPacket = this.getCached(`identity:${normalizedAgent.id}`)
+    const identityPacket = cachedIdentityPacket
+      ?? this.buildIdentityPacket(normalizedAgent)
+    this.setCache(`identity:${normalizedAgent.id}`, identityPacket)
     packets.push(identityPacket)
+    trace.push(
+      this.createTraceEntry(
+        'compose',
+        cachedIdentityPacket ? 'cached' : 'selected',
+        identityPacket,
+        cachedIdentityPacket
+          ? 'Loaded identity packet from static cache.'
+          : 'Loaded the identity tier for the active agent.',
+        cachedIdentityPacket ? 'static-cache' : identityPacket.metadata?.source
+      )
+    )
 
     // L1 — Task (always loaded)
-    packets.push(this.buildTaskPacket(task))
+    const taskPacket = this.buildTaskPacket(normalizedTask)
+    packets.push(taskPacket)
+    trace.push(this.createTraceEntry('compose', 'selected', taskPacket, 'Loaded the current task context.'))
 
     // L1 — Goal (if provided)
-    if (task.goal) packets.push(this.buildGoalPacket(task.goal))
+    if (normalizedTask.goal) {
+      const goalPacket = this.buildGoalPacket(normalizedTask.goal)
+      packets.push(goalPacket)
+      trace.push(this.createTraceEntry('compose', 'selected', goalPacket, 'Loaded the active goal context.'))
+    }
 
     // L1 — Repo (if provided)
-    if (task.repo) packets.push(this.buildRepoPacket(task.repo))
+    if (normalizedTask.repo) {
+      const repoPacket = this.buildRepoPacket(normalizedTask.repo)
+      packets.push(repoPacket)
+      trace.push(this.createTraceEntry('compose', 'selected', repoPacket, 'Loaded repository context attached to the task.'))
+    }
 
     // L1 — Handoff (if provided)
-    if (task.handoff) packets.push(this.buildHandoffPacket(task.handoff))
+    if (normalizedTask.handoff) {
+      const handoffPacket = this.buildHandoffPacket(normalizedTask.handoff)
+      packets.push(handoffPacket)
+      trace.push(this.createTraceEntry('compose', 'selected', handoffPacket, 'Loaded handoff context from a previous agent.'))
+    }
 
     // L2 — Experience (loaded from file if path provided)
-    if (agent.experiencePath) {
-      const expPacket = await this.buildExperiencePacket(agent.id, agent.experiencePath)
-      if (expPacket) packets.push(expPacket)
+    if (normalizedAgent.experiencePath) {
+      const expPacket = await this.buildExperiencePacket(normalizedAgent.id, normalizedAgent.experiencePath)
+      if (expPacket) {
+        packets.push(expPacket)
+        trace.push(this.createTraceEntry('compose', 'selected', expPacket, 'Loaded learned experience for the agent.'))
+      }
     }
 
     // L3 — Archive (semantic retrieval from vector store)
-    if (options.includePriorTasks && this.config.vectorStore) {
-      const archivePackets = await this.retrieveArchive(task, options.priorTaskLimit ?? 3)
+    if (options.includePriorTasks === true && this.config.vectorStore) {
+      const archivePackets = await this.retrieveArchive(
+        normalizedTask,
+        this.normalizePositiveInteger(options.priorTaskLimit) ?? 3
+      )
       packets.push(...archivePackets)
+      for (const archivePacket of archivePackets) {
+        trace.push(this.createTraceEntry('compose', 'selected', archivePacket, 'Retrieved similar prior tasks from the archive.', 'archive-search'))
+      }
     }
 
-    const finalPackets = enforceBudget(packets, maxTokens)
-    const totalTokens = finalPackets.reduce((sum, p) => sum + estimateTokens(p.content), 0)
+    const finalPackets = enforceBudget(packets, maxTokens, this.config.tokenizer)
+    const totalTokens = finalPackets.reduce((sum, p) => sum + estimateTokens(p.content, this.config.tokenizer), 0)
+    trace.push(...this.buildBudgetTrace(packets, finalPackets))
 
     return {
-      agentId: agent.id,
-      taskId: task.id,
+      agentId: normalizedAgent.id,
+      taskId: normalizedTask.id,
       sessionId: this.sessionId,
       packets: finalPackets,
       totalTokens,
       maxTokens,
       expansionLog: [],
+      trace,
     }
   }
 
@@ -129,7 +179,11 @@ export class AccordionComposer {
    * @returns A promise that resolves to the expanded AccordionBundle
    */
   async expand(bundle: AccordionBundle, options: ExpandOptions): Promise<AccordionBundle> {
-    const cacheKey = `expand:${options.tier}:${options.reason}`
+    const reason = this.normalizeRequiredString(options.reason, 'Expansion requested')
+    const limit = this.normalizePositiveInteger(options.limit) ?? 3
+    const experiencePath = this.normalizeOptionalString(options.experiencePath) ?? ''
+    const cacheKey = `expand:${options.tier}:${reason}`
+    const appendTrace = (entry: AccordionTraceEntry) => [...bundle.trace, entry]
     const cachedPacket = this.sessionCache.get(cacheKey)
     
     if (cachedPacket) {
@@ -137,7 +191,7 @@ export class AccordionComposer {
       if (tierExists) {
         const event: ExpansionEvent = {
           tier: options.tier,
-          reason: options.reason,
+          reason,
           tokensAdded: 0,
           timestamp: new Date(),
         }
@@ -146,13 +200,14 @@ export class AccordionComposer {
         return {
           ...bundle,
           expansionLog: [...bundle.expansionLog, event],
+          trace: appendTrace(this.createTraceEntry('expand', 'skipped', cachedPacket, 'Expansion skipped because the requested tier is already present.', 'session-cache')),
         }
       }
       
-      const tokensAdded = estimateTokens(cachedPacket.content)
+      const tokensAdded = estimateTokens(cachedPacket.content, this.config.tokenizer)
       const event: ExpansionEvent = {
         tier: options.tier,
-        reason: options.reason,
+        reason,
         tokensAdded,
         timestamp: new Date(),
       }
@@ -163,18 +218,19 @@ export class AccordionComposer {
         packets: [...bundle.packets, cachedPacket],
         totalTokens: bundle.totalTokens + tokensAdded,
         expansionLog: [...bundle.expansionLog, event],
+        trace: appendTrace(this.createTraceEntry('expand', 'cached', cachedPacket, 'Expanded bundle using a packet from the session cache.', 'session-cache')),
       }
     }
 
     try {
       if (options.tier === 'experience') {
-        const packet = await this.buildExperiencePacket(bundle.agentId, options.experiencePath ?? '')
+        const packet = await this.buildExperiencePacket(bundle.agentId, experiencePath)
         if (packet) {
           const tierExists = bundle.packets.some(p => p.tier === packet.tier)
           if (tierExists) {
             const event: ExpansionEvent = {
               tier: options.tier,
-              reason: options.reason,
+              reason,
               tokensAdded: 0,
               timestamp: new Date(),
             }
@@ -183,14 +239,15 @@ export class AccordionComposer {
             return {
               ...bundle,
               expansionLog: [...bundle.expansionLog, event],
+              trace: appendTrace(this.createTraceEntry('expand', 'skipped', packet, 'Expansion skipped because the experience tier is already present.', packet.metadata?.source)),
             }
           }
           
           this.sessionCache.set(cacheKey, packet)
-          const tokensAdded = estimateTokens(packet.content)
+          const tokensAdded = estimateTokens(packet.content, this.config.tokenizer)
           const event: ExpansionEvent = {
             tier: options.tier,
-            reason: options.reason,
+            reason,
             tokensAdded,
             timestamp: new Date(),
           }
@@ -201,18 +258,19 @@ export class AccordionComposer {
             packets: [...bundle.packets, packet],
             totalTokens: bundle.totalTokens + tokensAdded,
             expansionLog: [...bundle.expansionLog, event],
+            trace: appendTrace(this.createTraceEntry('expand', 'expanded', packet, 'Expanded the bundle with learned experience.', packet.metadata?.source)),
           }
         }
       } else if (options.tier === 'archive') {
-        const task = { id: bundle.taskId ?? '', title: options.reason }
-        const archivePackets = await this.retrieveArchive(task, options.limit ?? 3)
+        const task = { id: this.normalizeRequiredString(bundle.taskId, DEFAULT_TASK_ID), title: reason }
+        const archivePackets = await this.retrieveArchive(task, limit)
         if (archivePackets.length > 0) {
           const packet = archivePackets[0]
           const tierExists = bundle.packets.some(p => p.tier === packet.tier)
           if (tierExists) {
             const event: ExpansionEvent = {
               tier: options.tier,
-              reason: options.reason,
+              reason,
               tokensAdded: 0,
               timestamp: new Date(),
             }
@@ -221,14 +279,15 @@ export class AccordionComposer {
             return {
               ...bundle,
               expansionLog: [...bundle.expansionLog, event],
+              trace: appendTrace(this.createTraceEntry('expand', 'skipped', packet, 'Expansion skipped because the archive tier is already present.', 'archive-search')),
             }
           }
           
           this.sessionCache.set(cacheKey, packet)
-          const tokensAdded = estimateTokens(packet.content)
+          const tokensAdded = estimateTokens(packet.content, this.config.tokenizer)
           const event: ExpansionEvent = {
             tier: options.tier,
-            reason: options.reason,
+            reason,
             tokensAdded,
             timestamp: new Date(),
           }
@@ -239,6 +298,7 @@ export class AccordionComposer {
             packets: [...bundle.packets, packet],
             totalTokens: bundle.totalTokens + tokensAdded,
             expansionLog: [...bundle.expansionLog, event],
+            trace: appendTrace(this.createTraceEntry('expand', 'expanded', packet, 'Expanded the bundle with archive retrieval results.', 'archive-search')),
           }
         }
       } else {
@@ -246,7 +306,7 @@ export class AccordionComposer {
         if (existingPacket?.expanded) {
           const event: ExpansionEvent = {
             tier: options.tier,
-            reason: options.reason,
+            reason,
             tokensAdded: 0,
             timestamp: new Date(),
           }
@@ -255,6 +315,7 @@ export class AccordionComposer {
           return {
             ...bundle,
             expansionLog: [...bundle.expansionLog, event],
+            trace: appendTrace(this.createTraceEntry('expand', 'skipped', existingPacket, 'Expansion skipped because the requested tier is already expanded.', existingPacket.metadata?.source)),
           }
         }
       }
@@ -264,7 +325,7 @@ export class AccordionComposer {
 
     const event: ExpansionEvent = {
       tier: options.tier,
-      reason: options.reason,
+      reason,
       tokensAdded: 0,
       timestamp: new Date(),
     }
@@ -273,6 +334,14 @@ export class AccordionComposer {
     return {
       ...bundle,
       expansionLog: [...bundle.expansionLog, event],
+      trace: appendTrace({
+        timestamp: event.timestamp,
+        stage: 'expand',
+        action: 'skipped',
+        tier: options.tier,
+        source: options.tier,
+        reason: 'Expansion completed without adding new packets.',
+      }),
     }
   }
 
@@ -282,6 +351,13 @@ export class AccordionComposer {
    */
   clearSessionCache(): void {
     this.sessionCache.clear()
+  }
+
+  /**
+   * Clears the static cache shared across AccordionComposer instances.
+   */
+  static clearGlobalCache(): void {
+    AccordionComposer.cache.clear()
   }
 
   // ---------------------------------------------------------------------------
@@ -323,7 +399,7 @@ export class AccordionComposer {
 
     // Dynamic import — qdrant is an optional peer dep
     const { QdrantClient } = await import('@qdrant/js-client-rest')
-    const client = new QdrantClient({ url: this.config.vectorStore.url })
+    const client = new QdrantClient({ url: this.config.vectorStore.url, checkCompatibility: false })
     const collection = this.config.vectorStore.collection ?? 'tasks'
 
     await client.upsert(collection, {
@@ -356,6 +432,10 @@ export class AccordionComposer {
       summary: `Agent: ${agent.id}`,
       expanded: true,
       createdAt: now,
+      metadata: {
+        source: 'identity',
+        whySelected: 'Identity is always included as the top-priority tier.',
+      },
     }
   }
 
@@ -380,6 +460,10 @@ export class AccordionComposer {
       summary: `${task.title} (${task.type ?? 'task'})`,
       expanded: true,
       createdAt: new Date(),
+      metadata: {
+        source: 'task',
+        whySelected: 'Task context is always included so the active work stays in view.',
+      },
     }
   }
 
@@ -398,6 +482,10 @@ export class AccordionComposer {
       summary: `Goal: ${goal.title}`,
       expanded: true,
       createdAt: new Date(),
+      metadata: {
+        source: 'goal',
+        whySelected: 'Goal context was provided on the task.',
+      },
     }
   }
 
@@ -417,6 +505,10 @@ export class AccordionComposer {
       summary: `Repo: ${repo.name}`,
       expanded: true,
       createdAt: new Date(),
+      metadata: {
+        source: 'repo',
+        whySelected: 'Repository context was attached to the task.',
+      },
     }
   }
 
@@ -437,6 +529,10 @@ export class AccordionComposer {
       summary: `Handoff from ${handoff.fromAgent}`,
       expanded: true,
       createdAt: new Date(),
+      metadata: {
+        source: 'handoff',
+        whySelected: 'Handoff context was provided by a previous agent.',
+      },
     }
   }
 
@@ -461,6 +557,10 @@ export class AccordionComposer {
         summary: 'Agent experience and learned lessons',
         expanded: true,
         createdAt: new Date(),
+        metadata: {
+          source: 'experience-file',
+          whySelected: 'Experience content was available for this agent.',
+        },
       }
 
       this.setCache(cacheKey, packet)
@@ -482,7 +582,7 @@ export class AccordionComposer {
       )
 
       const { QdrantClient } = await import('@qdrant/js-client-rest')
-      const client = new QdrantClient({ url: this.config.vectorStore.url })
+      const client = new QdrantClient({ url: this.config.vectorStore.url, checkCompatibility: false })
       const collection = this.config.vectorStore.collection ?? 'tasks'
 
       const results = await client.search(collection, {
@@ -514,6 +614,11 @@ export class AccordionComposer {
         summary: `${results.length} similar past tasks retrieved`,
         expanded: true,
         createdAt: new Date(),
+        metadata: {
+          source: 'archive-search',
+          whySelected: 'Similar prior tasks were retrieved from the archive.',
+          score: results[0]?.score,
+        },
       }]
     } catch {
       return [] // Qdrant unreachable — degrade gracefully
@@ -525,6 +630,7 @@ export class AccordionComposer {
   // ---------------------------------------------------------------------------
 
   private getCached(key: string): AccordionPacket | null {
+    this.pruneExpiredCache()
     const entry = AccordionComposer.cache.get(key)
     if (entry && entry.expires > Date.now()) {
       return { ...entry.packet, id: uuid(), createdAt: new Date() }
@@ -533,9 +639,178 @@ export class AccordionComposer {
   }
 
   private setCache(key: string, packet: AccordionPacket): void {
+    this.pruneExpiredCache()
+    if (AccordionComposer.cache.has(key)) {
+      AccordionComposer.cache.delete(key)
+    }
+
     AccordionComposer.cache.set(key, {
       packet,
       expires: Date.now() + (this.config.cacheTtl ?? DEFAULT_CACHE_TTL),
+      createdAt: Date.now(),
     })
+
+    this.enforceCacheSize()
+  }
+
+  private pruneExpiredCache(): void {
+    const now = Date.now()
+    for (const [key, entry] of AccordionComposer.cache.entries()) {
+      if (entry.expires <= now) {
+        AccordionComposer.cache.delete(key)
+      }
+    }
+  }
+
+  private enforceCacheSize(): void {
+    const maxSize = this.normalizePositiveInteger(this.config.cacheMaxSize) ?? DEFAULT_CACHE_MAX_SIZE
+    while (AccordionComposer.cache.size > maxSize) {
+      const oldestKey = AccordionComposer.cache.keys().next().value
+      if (!oldestKey) break
+      AccordionComposer.cache.delete(oldestKey)
+    }
+  }
+
+  private createTraceEntry(
+    stage: AccordionTraceEntry['stage'],
+    action: AccordionTraceEntry['action'],
+    packet: AccordionPacket,
+    reason: string,
+    sourceOverride?: string
+  ): AccordionTraceEntry {
+    return {
+      timestamp: new Date(),
+      stage,
+      action,
+      tier: packet.tier,
+      packetId: packet.id,
+      source: sourceOverride ?? packet.metadata?.source ?? packet.tier,
+      reason,
+      tokenEstimate: estimateTokens(packet.content, this.config.tokenizer),
+      score: packet.metadata?.score,
+    }
+  }
+
+  private buildBudgetTrace(originalPackets: AccordionPacket[], finalPackets: AccordionPacket[]): AccordionTraceEntry[] {
+    const trace: AccordionTraceEntry[] = []
+    const finalPacketsById = new Map(finalPackets.map(packet => [packet.id, packet]))
+
+    for (const packet of originalPackets) {
+      const finalPacket = finalPacketsById.get(packet.id)
+
+      if (!finalPacket) {
+        trace.push(this.createTraceEntry('budget', 'dropped', packet, 'Dropped during budget enforcement because higher-priority packets consumed the available budget.'))
+        continue
+      }
+
+      if (finalPacket.content !== packet.content) {
+        trace.push(this.createTraceEntry('budget', 'truncated', finalPacket, 'Truncated during budget enforcement to fit within the available token budget.'))
+      }
+    }
+
+    return trace
+  }
+
+  private normalizeAgentConfig(agent: AgentConfig): AgentConfig {
+    const candidate = (agent ?? {}) as Partial<AgentConfig>
+
+    return {
+      id: this.normalizeRequiredString(candidate.id, DEFAULT_AGENT_ID),
+      identity: this.normalizeRequiredString(candidate.identity, DEFAULT_AGENT_IDENTITY),
+      experiencePath: this.normalizeOptionalString(candidate.experiencePath),
+      maxTokens: this.normalizePositiveInteger(candidate.maxTokens),
+    }
+  }
+
+  private normalizeTaskContext(task: TaskContext): TaskContext {
+    const candidate = (task ?? {}) as Partial<TaskContext>
+
+    return {
+      id: this.normalizeRequiredString(candidate.id, DEFAULT_TASK_ID),
+      title: this.normalizeRequiredString(candidate.title, DEFAULT_TASK_TITLE),
+      description: this.normalizeOptionalString(candidate.description),
+      priority: this.normalizeOptionalString(candidate.priority),
+      type: this.normalizeOptionalString(candidate.type),
+      owner: this.normalizeOptionalString(candidate.owner),
+      requirements: this.normalizeStringArray(candidate.requirements),
+      goal: candidate.goal ? this.normalizeGoalContext(candidate.goal) : undefined,
+      repo: candidate.repo ? this.normalizeRepoContext(candidate.repo) : undefined,
+      handoff: candidate.handoff ? this.normalizeHandoffContext(candidate.handoff) : undefined,
+    }
+  }
+
+  private normalizeGoalContext(goal: GoalContext): GoalContext {
+    const candidate = goal as Partial<GoalContext>
+
+    return {
+      id: this.normalizeRequiredString(candidate.id, 'goal'),
+      title: this.normalizeRequiredString(candidate.title, 'Untitled goal'),
+      description: this.normalizeOptionalString(candidate.description),
+      progress: this.normalizeFiniteNumber(candidate.progress),
+      status: this.normalizeOptionalString(candidate.status),
+    }
+  }
+
+  private normalizeRepoContext(repo: RepoContext): RepoContext {
+    const candidate = repo as Partial<RepoContext>
+
+    return {
+      name: this.normalizeRequiredString(candidate.name, 'Unnamed repository'),
+      path: this.normalizeRequiredString(candidate.path, '.'),
+      description: this.normalizeOptionalString(candidate.description),
+      techStack: this.normalizeStringArray(candidate.techStack),
+      mainFiles: this.normalizeStringArray(candidate.mainFiles),
+    }
+  }
+
+  private normalizeHandoffContext(handoff: HandoffContext): HandoffContext {
+    const candidate = handoff as Partial<HandoffContext>
+
+    return {
+      fromAgent: this.normalizeRequiredString(candidate.fromAgent, DEFAULT_AGENT_ID),
+      previousWork: this.normalizeOptionalString(candidate.previousWork),
+      notes: this.normalizeOptionalString(candidate.notes),
+      percentageComplete: this.normalizeFiniteNumber(candidate.percentageComplete),
+    }
+  }
+
+  private normalizeRequiredString(value: unknown, fallback: string): string {
+    if (typeof value !== 'string') return fallback
+
+    const trimmed = value.trim()
+    return trimmed.length > 0 ? trimmed : fallback
+  }
+
+  private normalizeOptionalString(value: unknown): string | undefined {
+    if (typeof value !== 'string') return undefined
+
+    const trimmed = value.trim()
+    return trimmed.length > 0 ? trimmed : undefined
+  }
+
+  private normalizeStringArray(value: unknown): string[] | undefined {
+    if (!Array.isArray(value)) return undefined
+
+    const normalized = value
+      .map(item => this.normalizeOptionalString(item))
+      .filter((item): item is string => item !== undefined)
+
+    return normalized.length > 0 ? normalized : undefined
+  }
+
+  private normalizeFiniteNumber(value: unknown): number | undefined {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      return undefined
+    }
+
+    return value
+  }
+
+  private normalizePositiveInteger(value: unknown): number | undefined {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+      return undefined
+    }
+
+    return Math.floor(value)
   }
 }

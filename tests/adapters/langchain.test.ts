@@ -24,6 +24,7 @@ function makeBundle(packets: AccordionPacket[]): AccordionBundle {
     totalTokens: packets.reduce((sum, p) => sum + Math.ceil(p.content.length / 4), 0),
     maxTokens: 8000,
     expansionLog: [],
+    trace: [],
   }
 }
 

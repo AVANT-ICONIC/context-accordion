@@ -71,6 +71,8 @@ export type {
   AccordionBundle,
   AccordionConfig,
   AccordionPacket,
+  AccordionPacketMetadata,
+  AccordionTraceEntry,
   AgentConfig,
   ComposeOptions,
   ExpandOptions,
@@ -84,6 +86,8 @@ export type {
   HandoffContext,
   TierLevel,
 } from './types'
+
+export { accordionTraceToMarkdown } from './trace'
 
 export { OllamaEmbedding, OpenAIEmbedding } from './embeddings'
 export type { AnyEmbeddingProvider } from './embeddings'

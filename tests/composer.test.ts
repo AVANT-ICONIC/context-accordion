@@ -36,6 +36,29 @@ describe('AccordionComposer', () => {
     expect(bundle.totalTokens).toBeLessThanOrEqual(500)
   })
 
+  it('uses a custom tokenizer from config when composing bundles', async () => {
+    const tokenizer = (text: string) => text.split(/\s+/).filter(Boolean).length
+    const composer = new AccordionComposer({ tokenizer, maxTokens: 8 })
+    const bundle = await composer.compose(agent, task, { maxTokens: 8 })
+
+    expect(bundle.totalTokens).toBeLessThanOrEqual(8)
+  })
+
+  it('normalizes invalid agent and task inputs instead of producing broken packets', async () => {
+    const composer = new AccordionComposer()
+    const malformedAgent = { id: '   ', identity: '   ' } as unknown as AgentConfig
+    const malformedTask = { id: '', title: '   ', requirements: ['first', '', ' second '] } as unknown as TaskContext
+
+    const bundle = await composer.compose(malformedAgent, malformedTask)
+    const rendered = composer.render(bundle)
+
+    expect(bundle.agentId).toBe('unknown-agent')
+    expect(bundle.taskId).toBe('unknown-task')
+    expect(rendered).toContain('Untitled task')
+    expect(rendered).toContain('first')
+    expect(rendered).toContain('second')
+  })
+
   it('includes goal packet when provided', async () => {
     const composer = new AccordionComposer()
     const bundle = await composer.compose(agent, {
@@ -44,6 +67,30 @@ describe('AccordionComposer', () => {
     })
 
     expect(bundle.packets.some(p => p.tier === 'goal')).toBe(true)
+  })
+
+  it('records selection trace entries and packet metadata during compose', async () => {
+    const composer = new AccordionComposer()
+    const bundle = await composer.compose(agent, {
+      ...task,
+      repo: { name: 'context-accordion', path: '/repo/context-accordion' },
+    })
+
+    expect(bundle.trace.some(entry => (entry.action === 'selected' || entry.action === 'cached') && entry.tier === 'identity')).toBe(true)
+    expect(bundle.trace.some(entry => entry.action === 'selected' && entry.tier === 'task')).toBe(true)
+    expect(bundle.packets.every(packet => packet.metadata?.source)).toBe(true)
+  })
+
+  it('records budget trace entries when packets are truncated or dropped', async () => {
+    const composer = new AccordionComposer({ maxTokens: 150 })
+    const bundle = await composer.compose(agent, {
+      ...task,
+      goal: { id: 'goal-1', title: 'Improve auth reliability', progress: 40, status: 'in_progress' },
+      repo: { name: 'context-accordion', path: '/repo/context-accordion', mainFiles: Array.from({ length: 10 }, (_, index) => `src/file-${index}.ts`) },
+      handoff: { fromAgent: 'reviewer', notes: 'Carry over the previous investigation with all details preserved.'.repeat(20) },
+    }, { maxTokens: 150 })
+
+    expect(bundle.trace.some(entry => entry.stage === 'budget' && (entry.action === 'truncated' || entry.action === 'dropped'))).toBe(true)
   })
 
   it('renders bundle to a non-empty string', async () => {
@@ -76,7 +123,7 @@ describe('AccordionComposer', () => {
 
     beforeEach(async () => {
       tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'accordion-test-'))
-      ;(AccordionComposer as unknown as { cache: Map<string, unknown> }).cache.clear()
+      AccordionComposer.clearGlobalCache()
     })
 
     afterEach(async () => {
@@ -115,6 +162,7 @@ describe('AccordionComposer', () => {
       const experiencePacket = expandedBundle.packets.find(p => p.tier === 'experience')
       expect(experiencePacket?.content).toContain('Learned to handle auth edge cases')
       expect(expandedBundle.expansionLog[0].tokensAdded).toBeGreaterThan(0)
+      expect(expandedBundle.trace.some(entry => entry.stage === 'expand' && entry.action === 'expanded' && entry.tier === 'experience')).toBe(true)
     })
 
     it('caches results in session cache (second call is free)', async () => {
@@ -162,7 +210,7 @@ describe('AccordionComposer', () => {
 
     beforeEach(async () => {
       tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'accordion-cache-test-'))
-      ;(AccordionComposer as unknown as { cache: Map<string, unknown> }).cache.clear()
+      AccordionComposer.clearGlobalCache()
     })
 
     afterEach(async () => {
@@ -193,6 +241,27 @@ describe('AccordionComposer', () => {
       expect(packet2).toBeDefined()
     })
 
+    it('static cache respects cacheMaxSize config', async () => {
+      const experiencePathOne = path.join(tempDir, 'experience-one.md')
+      const experiencePathTwo = path.join(tempDir, 'experience-two.md')
+      await fs.writeFile(experiencePathOne, '# Experience\n\nFirst content.')
+      await fs.writeFile(experiencePathTwo, '# Experience\n\nSecond content.')
+
+      const firstComposer = new AccordionComposer({ cacheMaxSize: 1 })
+      await firstComposer.compose({ ...agent, id: 'builder-one', experiencePath: experiencePathOne }, task)
+
+      const secondComposer = new AccordionComposer({ cacheMaxSize: 1 })
+      await secondComposer.compose({ ...agent, id: 'builder-two', experiencePath: experiencePathTwo }, task)
+
+      await fs.writeFile(experiencePathOne, '# Experience\n\nUpdated first content.')
+
+      const thirdComposer = new AccordionComposer({ cacheMaxSize: 1 })
+      const bundle = await thirdComposer.compose({ ...agent, id: 'builder-one', experiencePath: experiencePathOne }, task)
+      const experiencePacket = bundle.packets.find(p => p.tier === 'experience')
+
+      expect(experiencePacket?.content).toContain('Updated first content')
+    })
+
     it('clearSessionCache() clears the session cache', async () => {
       const experiencePath = path.join(tempDir, 'experience.md')
       await fs.writeFile(experiencePath, '# Experience\n\nClear cache test.')
@@ -221,6 +290,23 @@ describe('AccordionComposer', () => {
 
       // Cache was cleared but tier already exists in bundle - no duplicates allowed
       expect(expanded2.packets.filter(p => p.tier === 'experience').length).toBe(1)
+    })
+
+    it('clearGlobalCache() clears the static cache shared across composers', async () => {
+      const experiencePath = path.join(tempDir, 'experience-global.md')
+      await fs.writeFile(experiencePath, '# Experience\n\nOriginal content.')
+
+      const firstComposer = new AccordionComposer()
+      await firstComposer.compose({ ...agent, experiencePath }, task)
+
+      AccordionComposer.clearGlobalCache()
+      await fs.writeFile(experiencePath, '# Experience\n\nUpdated content after clear.')
+
+      const secondComposer = new AccordionComposer()
+      const bundle = await secondComposer.compose({ ...agent, experiencePath }, task)
+      const experiencePacket = bundle.packets.find(p => p.tier === 'experience')
+
+      expect(experiencePacket?.content).toContain('Updated content after clear')
     })
   })
 })

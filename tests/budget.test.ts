@@ -48,11 +48,39 @@ describe('enforceBudget', () => {
     expect(taskPacket).toBeDefined()
     expect(taskPacket?.content).toContain('[Truncated')
   })
+
+  it('never exceeds the max token budget even when never-drop packets overflow it', () => {
+    const identity = makePacket('identity', 100, 'a'.repeat(4000))
+    const task = makePacket('task', 80, 'b'.repeat(4000))
+
+    const result = enforceBudget([identity, task], 50)
+    const totalTokens = result.reduce((sum, packet) => sum + estimateTokens(packet.content), 0)
+
+    expect(totalTokens).toBeLessThanOrEqual(50)
+  })
+
+  it('uses a custom tokenizer when enforcing the budget', () => {
+    const tokenizer = (text: string) => text.split(/\s+/).filter(Boolean).length
+    const identity = makePacket('identity', 100, 'one two')
+    const task = makePacket('task', 80, 'three four five six')
+    const archive = makePacket('archive', 50, 'seven eight nine')
+
+    const result = enforceBudget([identity, task, archive], 6, tokenizer)
+    const totalTokens = result.reduce((sum, packet) => sum + estimateTokens(packet.content, tokenizer), 0)
+
+    expect(totalTokens).toBeLessThanOrEqual(6)
+    expect(result.some(packet => packet.tier === 'archive')).toBe(false)
+  })
 })
 
 describe('estimateTokens', () => {
   it('estimates ~1 token per 4 chars', () => {
     expect(estimateTokens('a'.repeat(400))).toBe(100)
     expect(estimateTokens('a'.repeat(4000))).toBe(1000)
+  })
+
+  it('supports a custom tokenizer', () => {
+    const tokenizer = (text: string) => text.split(/\s+/).filter(Boolean).length
+    expect(estimateTokens('one two three', tokenizer)).toBe(3)
   })
 })
