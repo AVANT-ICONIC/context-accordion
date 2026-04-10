@@ -115,6 +115,14 @@ export interface SearchComposeOptions extends ComposeOptions {
   retrievalIntents?: RetrievalIntent[]
 }
 
+export type WakeupFormat = 'plain' | 'markdown' | 'system-prompt'
+
+export interface WakeupOptions {
+  format?: WakeupFormat
+  maxTokens?: number
+  includeTraceSummary?: boolean
+}
+
 export interface EmbeddingProvider {
   embed(text: string): Promise<number[]>
 }

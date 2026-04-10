@@ -34,7 +34,7 @@
 
 ## Runtime ergonomics
 
-- [ ] Add wake-up packet generation for compact bootstrap prompts.
+- [x] Add wake-up packet generation for compact bootstrap prompts.
 - [ ] Add lifecycle hooks for `onRunEnd`, `beforeContextShrink`, and post-task archival.
 - [ ] Add shared vs private archive scopes for agent and project memory partitions.
 - [ ] Add a simple trace viewer example for debugging in real apps.

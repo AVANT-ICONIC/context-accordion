@@ -21,6 +21,7 @@ import type {
   SearchComposeOptions,
   TaskContext,
   TierLevel,
+  WakeupOptions,
 } from './types'
 
 const DEFAULT_MAX_TOKENS = 8000
@@ -30,6 +31,7 @@ const DEFAULT_AGENT_ID = 'unknown-agent'
 const DEFAULT_AGENT_IDENTITY = 'You are an AI agent.'
 const DEFAULT_TASK_ID = 'unknown-task'
 const DEFAULT_TASK_TITLE = 'Untitled task'
+const DEFAULT_WAKEUP_MAX_TOKENS = 1200
 
 interface ComposeInput {
   normalizedAgent: AgentConfig
@@ -616,6 +618,48 @@ export class AccordionComposer {
       .trim()
   }
 
+  /**
+   * Renders a compact wake-up prompt for resuming work from an existing bundle.
+   *
+   * @param bundle - The accordion bundle to summarize
+   * @param options - Wake-up rendering options such as format and token budget
+   * @returns A compact bootstrap prompt derived from the bundle
+   */
+  generateWakeup(bundle: AccordionBundle, options: WakeupOptions = {}): string {
+    const wakeupPackets = bundle.packets.map(packet => this.buildWakeupPacket(packet))
+    const tracePacket = options.includeTraceSummary
+      ? this.buildWakeupTracePacket(bundle.trace)
+      : null
+
+    if (tracePacket) {
+      wakeupPackets.push(tracePacket)
+    }
+
+    const maxTokens =
+      this.normalizePositiveInteger(options.maxTokens)
+      ?? Math.min(bundle.maxTokens, DEFAULT_WAKEUP_MAX_TOKENS)
+    const finalPackets = enforceBudget(wakeupPackets, maxTokens, this.config.tokenizer)
+    const content = finalPackets
+      .map(packet => packet.content)
+      .join('\n\n')
+      .trim()
+
+    if ((options.format ?? 'markdown') === 'plain') {
+      return content
+    }
+
+    if (options.format === 'system-prompt') {
+      return [
+        'You are resuming work with a compact wake-up context.',
+        'Start from this summary and request expansion only when you need deeper detail.',
+        '',
+        content,
+      ].join('\n')
+    }
+
+    return ['## Wake-Up Context', '', content].join('\n')
+  }
+
   // ---------------------------------------------------------------------------
   // index() — store a completed task in the vector archive (L3)
   // ---------------------------------------------------------------------------
@@ -652,6 +696,68 @@ export class AccordionComposer {
         },
       }],
     })
+  }
+
+  private buildWakeupPacket(packet: AccordionPacket): AccordionPacket {
+    const title = packet.tier.charAt(0).toUpperCase() + packet.tier.slice(1)
+    let content: string
+
+    if (packet.tier === 'identity') {
+      const identitySection = packet.content.split('\n\n## Session')[0]?.trim() ?? packet.content
+      content = `## ${title}\n${identitySection}`
+    } else if (packet.tier === 'task') {
+      content = `## ${title}\n${packet.content}`
+    } else {
+      const whySelected = packet.metadata?.whySelected
+      content = [
+        `## ${title}`,
+        packet.summary,
+        whySelected ? `Why: ${whySelected}` : '',
+      ].filter(Boolean).join('\n')
+    }
+
+    return {
+      ...packet,
+      id: uuid(),
+      content,
+      maxTokens: Math.min(packet.maxTokens, 400),
+      createdAt: new Date(),
+    }
+  }
+
+  private buildWakeupTracePacket(trace: AccordionTraceEntry[]): AccordionPacket | null {
+    if (trace.length === 0) {
+      return null
+    }
+
+    const recentEntries = trace.slice(-4)
+    const content = [
+      '## Recent Decisions',
+      ...recentEntries.map(entry => {
+        const details = [
+          `${entry.stage}/${entry.action} ${entry.tier}: ${entry.reason}`,
+          entry.query ? `query=${entry.query}` : '',
+          entry.priority !== undefined ? `priority=${entry.priority}` : '',
+        ].filter(Boolean)
+
+        return `- ${details.join(' | ')}`
+      }),
+    ].join('\n')
+
+    return {
+      id: uuid(),
+      tier: 'archive',
+      priority: 65,
+      maxTokens: 250,
+      content,
+      summary: 'Recent retrieval and budget decisions',
+      expanded: true,
+      createdAt: new Date(),
+      metadata: {
+        source: 'trace-summary',
+        whySelected: 'Recent retrieval and budget decisions can help an agent resume work quickly.',
+      },
+    }
   }
 
   // ---------------------------------------------------------------------------

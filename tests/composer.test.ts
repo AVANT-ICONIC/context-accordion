@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { AccordionComposer } from '../src/composer'
+import { estimateTokens } from '../src/budget'
 import type { AgentConfig, TaskContext, ExpandOptions } from '../src/types'
 import { promises as fs } from 'fs'
 import * as path from 'path'
@@ -101,6 +102,42 @@ describe('AccordionComposer', () => {
     expect(typeof rendered).toBe('string')
     expect(rendered.length).toBeGreaterThan(0)
     expect(rendered).toContain('Fix authentication bug')
+  })
+
+  it('generateWakeup() renders compact markdown within the requested budget', async () => {
+    const tokenizer = (text: string) => text.split(/\s+/).filter(Boolean).length
+    const composer = new AccordionComposer({ tokenizer })
+    const bundle = await composer.compose(agent, {
+      ...task,
+      goal: { id: 'goal-1', title: 'Improve auth reliability', progress: 40, status: 'in_progress' },
+      repo: { name: 'context-accordion', path: '/repo/context-accordion', techStack: ['TypeScript', 'Vitest'] },
+      handoff: { fromAgent: 'reviewer', notes: 'Focus on regression coverage and rollout safety.' },
+    })
+
+    const wakeup = composer.generateWakeup(bundle, {
+      format: 'markdown',
+      maxTokens: 140,
+      includeTraceSummary: true,
+    })
+
+    expect(wakeup).toContain('## Wake-Up Context')
+    expect(wakeup).toContain('## Identity')
+    expect(wakeup).toContain('## Task')
+    expect(wakeup).toContain('## Recent Decisions')
+    expect(estimateTokens(wakeup, tokenizer)).toBeLessThanOrEqual(140)
+  })
+
+  it('generateWakeup() renders system-prompt format', async () => {
+    const composer = new AccordionComposer()
+    const bundle = await composer.compose(agent, task)
+
+    const wakeup = composer.generateWakeup(bundle, {
+      format: 'system-prompt',
+    })
+
+    expect(wakeup).toContain('You are resuming work with a compact wake-up context.')
+    expect(wakeup).toContain('## Identity')
+    expect(wakeup).toContain('## Task')
   })
 
   it('identity packet has highest priority', async () => {

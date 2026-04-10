@@ -59,6 +59,7 @@ import { AccordionComposer } from 'context-accordion'
 | `composer.planRetrieval(agent, task, options?)` | Create ordered retrieval intents before loading optional tiers | Stable |
 | `composer.searchAndCompose(agent, task, options?)` | Build a bundle using planned retrieval intents and planner traces | Stable |
 | `composer.expand(bundle, options)` | Expand a tier on-demand | Stable |
+| `composer.generateWakeup(bundle, options?)` | Render a compact bootstrap prompt from an existing bundle | Stable |
 | `composer.render(bundle)` | Render bundle to string | Stable |
 | `composer.index(options)` | Index a task for archive retrieval | Stable |
 | `composer.clearSessionCache()` | Clear session cache | Stable |
@@ -100,6 +101,8 @@ import type {
   RepoContext,
   HandoffContext,
   TierLevel,
+  WakeupFormat,
+  WakeupOptions,
 } from 'context-accordion'
 ```
 
@@ -114,6 +117,18 @@ import { accordionTraceToMarkdown } from 'context-accordion'
 | Export | Description | Stability |
 |--------|-------------|-----------|
 | `accordionTraceToMarkdown(bundle)` | Render bundle trace/debug output as markdown | Stable |
+
+### Wake-Up Rendering
+
+```typescript
+const wakeup = composer.generateWakeup(bundle, {
+  format: 'system-prompt',
+  maxTokens: 1200,
+  includeTraceSummary: true,
+})
+```
+
+Wake-up rendering keeps identity and task detail, compresses lower-priority tiers to summaries, and can include recent retrieval and budget decisions.
 
 ### Embedding Providers
 

@@ -10,7 +10,7 @@
  * Public API surface:
  *
  * Stable (recommended for use):
- * - `AccordionComposer` - Main composition class, including planned retrieval helpers
+ * - `AccordionComposer` - Main composition class, including planned retrieval and wake-up helpers
  * - `accordionTraceToMarkdown` - Debug renderer for bundle trace output
  * - Types: AccordionBundle, AccordionPacket, AgentConfig, TaskContext, RetrievalIntent, etc.
  * - `OllamaEmbedding`, `OpenAIEmbedding` - Embedding providers
@@ -91,6 +91,8 @@ export type {
   RepoContext,
   HandoffContext,
   TierLevel,
+  WakeupFormat,
+  WakeupOptions,
 } from './types'
 
 export { accordionTraceToMarkdown } from './trace'

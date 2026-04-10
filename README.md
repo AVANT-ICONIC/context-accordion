@@ -92,7 +92,7 @@ The public API is exported from the main entry point and subpath exports.
 | `AccordionComposer` | Main class for context composition and planned retrieval |
 | `accordionTraceToMarkdown` | Debug renderer for bundle trace output |
 | `OllamaEmbedding`, `OpenAIEmbedding` | Embedding providers |
-| Types (AccordionBundle, AccordionPacket, AgentConfig, TaskContext, RetrievalIntent, etc.) | TypeScript interfaces |
+| Types (AccordionBundle, AccordionPacket, AgentConfig, TaskContext, RetrievalIntent, WakeupOptions, etc.) | TypeScript interfaces |
 
 ### Alpha (may change until 1.0.0)
 | Export | Description |
@@ -231,6 +231,20 @@ console.log(accordionTraceToMarkdown(plannedBundle))
 ```
 
 Planner traces include the retrieval query and priority, and archive retrieval also records per-match trace entries.
+
+### Wake-Up Prompt
+
+Use `generateWakeup()` to resume from a bundle with a compact bootstrap prompt:
+
+```typescript
+const wakeup = composer.generateWakeup(plannedBundle, {
+  format: 'system-prompt',
+  maxTokens: 1200,
+  includeTraceSummary: true,
+})
+```
+
+This keeps identity and task detail, compresses the rest to summaries, and can optionally include recent retrieval and budget decisions.
 
 ---
 
