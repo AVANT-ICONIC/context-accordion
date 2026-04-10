@@ -34,6 +34,14 @@ export function accordionTraceToMarkdown(
       lines.push(`- Score: ${entry.score}`)
     }
 
+    if (entry.query) {
+      lines.push(`- Query: ${entry.query}`)
+    }
+
+    if (entry.priority !== undefined) {
+      lines.push(`- Priority: ${entry.priority}`)
+    }
+
     return lines.join('\n')
   })
 

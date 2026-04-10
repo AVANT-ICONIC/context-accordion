@@ -32,7 +32,13 @@ function makeBundle(trace: AccordionTraceEntry[]): AccordionBundle {
 describe('accordionTraceToMarkdown', () => {
   it('renders bundle trace entries as markdown', () => {
     const bundle = makeBundle([
-      makeTraceEntry(),
+      makeTraceEntry({
+        stage: 'plan',
+        source: 'retrieval-planner',
+        reason: 'Plan archive retrieval before compose.',
+        query: 'similar auth incidents',
+        priority: 70,
+      }),
       makeTraceEntry({
         stage: 'budget',
         action: 'truncated',
@@ -46,10 +52,12 @@ describe('accordionTraceToMarkdown', () => {
     const markdown = accordionTraceToMarkdown(bundle)
 
     expect(markdown).toContain('## Accordion Trace')
-    expect(markdown).toContain('compose/selected - task')
+    expect(markdown).toContain('plan/selected - task')
     expect(markdown).toContain('budget/truncated - repo')
     expect(markdown).toContain('Token estimate: 42')
     expect(markdown).toContain('Score: 0.91')
+    expect(markdown).toContain('Query: similar auth incidents')
+    expect(markdown).toContain('Priority: 70')
   })
 
   it('renders a helpful empty-state message', () => {

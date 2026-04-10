@@ -127,4 +127,110 @@ describe('Qdrant success paths', () => {
       })
     )
   })
+
+  it('plans typed retrieval intents for experience and archive', () => {
+    const composer = new AccordionComposer({
+      vectorStore,
+      embeddingProvider,
+    })
+
+    const intents = composer.planRetrieval(
+      {
+        id: 'builder',
+        identity: 'You are a senior software engineer.',
+        experiencePath: './experience.md',
+      },
+      {
+        id: 'task-archive',
+        title: 'Fix session expiry',
+        description: 'Users are logged out after five minutes.',
+      },
+      {
+        includePriorTasks: true,
+        priorTaskLimit: 2,
+      },
+    )
+
+    expect(intents).toEqual([
+      expect.objectContaining({
+        target: 'experience',
+        priority: 90,
+      }),
+      expect.objectContaining({
+        target: 'archive',
+        priority: 70,
+        limit: 2,
+      }),
+    ])
+  })
+
+  it('searchAndCompose records planner traces and archive match details', async () => {
+    const embed = vi.fn().mockResolvedValue([0.1, 0.2, 0.3])
+    qdrantMocks.search.mockResolvedValue([
+      {
+        id: 'prior-task-1',
+        score: 0.91,
+        payload: {
+          title: 'Previous auth incident',
+          content: 'Refresh token rotation fixed session expiry.',
+        },
+      },
+      {
+        id: 'prior-task-2',
+        score: 0.83,
+        payload: {
+          title: 'Another login regression',
+          content: 'Cookie expiry drift caused forced reauthentication.',
+        },
+      },
+    ])
+
+    const composer = new AccordionComposer({
+      vectorStore,
+      embeddingProvider: { embed },
+    })
+
+    const bundle = await composer.searchAndCompose(
+      {
+        id: 'builder',
+        identity: 'You are a senior software engineer.',
+      },
+      {
+        id: 'task-archive',
+        title: 'Fix session expiry',
+        description: 'Users are logged out after five minutes.',
+      },
+      {
+        retrievalIntents: [
+          {
+            target: 'archive',
+            query: 'similar auth incidents with forced logout',
+            priority: 55,
+            reason: 'Search related archive incidents before patching auth.',
+            limit: 2,
+          },
+        ],
+      },
+    )
+
+    expect(embed).toHaveBeenCalledWith('similar auth incidents with forced logout')
+    expect(bundle.trace.some(entry =>
+      entry.stage === 'plan'
+      && entry.action === 'selected'
+      && entry.query === 'similar auth incidents with forced logout'
+      && entry.priority === 55
+    )).toBe(true)
+    expect(bundle.trace.some(entry =>
+      entry.source === 'archive-match'
+      && entry.query === 'similar auth incidents with forced logout'
+      && entry.reason.includes('Previous auth incident')
+    )).toBe(true)
+    expect(qdrantMocks.search).toHaveBeenCalledWith(
+      'tasks',
+      expect.objectContaining({
+        limit: 3,
+        with_payload: true,
+      }),
+    )
+  })
 })

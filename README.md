@@ -89,10 +89,10 @@ The public API is exported from the main entry point and subpath exports.
 ### Stable (recommended)
 | Export | Description |
 |--------|-------------|
-| `AccordionComposer` | Main class for context composition |
+| `AccordionComposer` | Main class for context composition and planned retrieval |
 | `accordionTraceToMarkdown` | Debug renderer for bundle trace output |
 | `OllamaEmbedding`, `OpenAIEmbedding` | Embedding providers |
-| Types (AccordionBundle, AccordionPacket, AgentConfig, TaskContext, etc.) | TypeScript interfaces |
+| Types (AccordionBundle, AccordionPacket, AgentConfig, TaskContext, RetrievalIntent, etc.) | TypeScript interfaces |
 
 ### Alpha (may change until 1.0.0)
 | Export | Description |
@@ -180,6 +180,57 @@ const bundle = await composer.compose(
 // Render to a prompt string
 const prompt = composer.render(bundle)
 ```
+
+### Planned Retrieval
+
+Use `searchAndCompose()` when you want a traceable retrieval plan before loading optional tiers:
+
+```typescript
+import { AccordionComposer, accordionTraceToMarkdown } from 'context-accordion'
+
+const composer = new AccordionComposer({
+  vectorStore: {
+    url: process.env.QDRANT_URL,
+  },
+})
+
+const intents = composer.planRetrieval(
+  {
+    id: 'builder',
+    identity: 'You are a senior software engineer.',
+    experiencePath: './agents/builder/experience.md',
+  },
+  {
+    id: 'issue-123',
+    title: 'Fix authentication bug in login flow',
+    description: 'Users are getting logged out after 5 minutes...',
+  },
+  {
+    includePriorTasks: true,
+    priorTaskLimit: 2,
+  },
+)
+
+const plannedBundle = await composer.searchAndCompose(
+  {
+    id: 'builder',
+    identity: 'You are a senior software engineer.',
+    experiencePath: './agents/builder/experience.md',
+  },
+  {
+    id: 'issue-123',
+    title: 'Fix authentication bug in login flow',
+    description: 'Users are getting logged out after 5 minutes...',
+  },
+  {
+    retrievalIntents: intents,
+  },
+)
+
+console.log(accordionTraceToMarkdown(plannedBundle))
+```
+
+Planner traces include the retrieval query and priority, and archive retrieval also records per-match trace entries.
 
 ---
 

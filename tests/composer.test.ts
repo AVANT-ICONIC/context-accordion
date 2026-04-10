@@ -134,6 +134,24 @@ describe('AccordionComposer', () => {
     expect(bundle.packets.some(p => p.tier === 'archive')).toBe(false)
   })
 
+  it('records skipped planner traces when an explicit experience intent cannot be fulfilled', async () => {
+    const composer = new AccordionComposer()
+    const bundle = await composer.searchAndCompose(agent, task, {
+      retrievalIntents: [
+        {
+          target: 'experience',
+          query: 'lessons for auth regressions',
+          priority: 50,
+          reason: 'Consult prior agent experience.',
+        },
+      ],
+    })
+
+    expect(bundle.packets.some(packet => packet.tier === 'experience')).toBe(false)
+    expect(bundle.trace.some(entry => entry.stage === 'plan' && entry.action === 'selected' && entry.query === 'lessons for auth regressions')).toBe(true)
+    expect(bundle.trace.some(entry => entry.stage === 'plan' && entry.action === 'skipped' && entry.reason.includes('does not define an experience path'))).toBe(true)
+  })
+
   describe('expand()', () => {
     let tempDir: string
 

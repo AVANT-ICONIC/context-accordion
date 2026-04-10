@@ -10,9 +10,9 @@
  * Public API surface:
  *
  * Stable (recommended for use):
- * - `AccordionComposer` - Main composition class
+ * - `AccordionComposer` - Main composition class, including planned retrieval helpers
  * - `accordionTraceToMarkdown` - Debug renderer for bundle trace output
- * - Types: AccordionBundle, AccordionPacket, AgentConfig, TaskContext, etc.
+ * - Types: AccordionBundle, AccordionPacket, AgentConfig, TaskContext, RetrievalIntent, etc.
  * - `OllamaEmbedding`, `OpenAIEmbedding` - Embedding providers
  *
  * Alpha (may change without notice):
@@ -81,6 +81,9 @@ export type {
   ExpandOptions,
   ExpansionEvent,
   EmbeddingProvider,
+  RetrievalIntent,
+  RetrievalIntentTarget,
+  SearchComposeOptions,
   VectorStoreConfig,
   IndexTaskOptions,
   TaskContext,

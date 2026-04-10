@@ -22,7 +22,7 @@ export interface AccordionPacket {
 
 export interface AccordionTraceEntry {
   timestamp: Date
-  stage: 'compose' | 'expand' | 'budget'
+  stage: 'plan' | 'compose' | 'expand' | 'budget'
   action: 'selected' | 'cached' | 'skipped' | 'expanded' | 'dropped' | 'truncated'
   tier: TierLevel
   packetId?: string
@@ -30,6 +30,8 @@ export interface AccordionTraceEntry {
   reason: string
   tokenEstimate?: number
   score?: number
+  query?: string
+  priority?: number
 }
 
 export interface AccordionBundle {
@@ -97,6 +99,20 @@ export interface ComposeOptions {
   maxTokens?: number
   includePriorTasks?: boolean     // triggers L3 archive retrieval
   priorTaskLimit?: number         // how many prior tasks to retrieve (default: 3)
+}
+
+export type RetrievalIntentTarget = 'experience' | 'archive'
+
+export interface RetrievalIntent {
+  target: RetrievalIntentTarget
+  query: string
+  priority: number
+  reason: string
+  limit?: number
+}
+
+export interface SearchComposeOptions extends ComposeOptions {
+  retrievalIntents?: RetrievalIntent[]
 }
 
 export interface EmbeddingProvider {

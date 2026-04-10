@@ -16,7 +16,9 @@ import type {
   GoalContext,
   HandoffContext,
   IndexTaskOptions,
+  RetrievalIntent,
   RepoContext,
+  SearchComposeOptions,
   TaskContext,
   TierLevel,
 } from './types'
@@ -28,6 +30,24 @@ const DEFAULT_AGENT_ID = 'unknown-agent'
 const DEFAULT_AGENT_IDENTITY = 'You are an AI agent.'
 const DEFAULT_TASK_ID = 'unknown-task'
 const DEFAULT_TASK_TITLE = 'Untitled task'
+
+interface ComposeInput {
+  normalizedAgent: AgentConfig
+  normalizedTask: TaskContext
+  maxTokens: number
+}
+
+interface ArchiveSearchMatch {
+  title: string
+  content: string
+  score?: number
+}
+
+interface ArchiveRetrievalResult {
+  packet: AccordionPacket | null
+  matches: ArchiveSearchMatch[]
+  query: string
+}
 
 export class AccordionComposer {
   private config: AccordionConfig
@@ -73,22 +93,144 @@ export class AccordionComposer {
     task: TaskContext,
     options: ComposeOptions = {}
   ): Promise<AccordionBundle> {
+    const input = this.prepareComposeInput(agent, task, options.maxTokens)
+    const trace: AccordionTraceEntry[] = []
+    const packets = this.buildBasePackets(input.normalizedAgent, input.normalizedTask, trace)
+
+    await this.appendExperiencePacket(packets, trace, input.normalizedAgent)
+
+    if (options.includePriorTasks === true) {
+      await this.appendArchivePacket(
+        packets,
+        trace,
+        input.normalizedTask,
+        this.normalizePositiveInteger(options.priorTaskLimit) ?? 3,
+      )
+    }
+
+    return this.finalizeBundle(input, packets, trace)
+  }
+
+  /**
+   * Plans retrieval intents for a task before executing the more expensive retrieval path.
+   *
+   * @param agent - Agent configuration used to determine whether experience retrieval is available
+   * @param task - Task context used to derive experience and archive search queries
+   * @param options - Optional planning and archive configuration
+   * @returns Ordered retrieval intents, highest priority first
+   */
+  planRetrieval(
+    agent: AgentConfig,
+    task: TaskContext,
+    options: SearchComposeOptions = {},
+  ): RetrievalIntent[] {
+    const input = this.prepareComposeInput(agent, task, options.maxTokens)
+    const archiveLimit = this.normalizePositiveInteger(options.priorTaskLimit) ?? 3
+    const intents: RetrievalIntent[] = []
+
+    if (input.normalizedAgent.experiencePath) {
+      intents.push({
+        target: 'experience',
+        query: this.buildRetrievalQuery(input.normalizedTask, 'experience'),
+        priority: 90,
+        reason: 'Agent-specific experience is available and should be consulted before broader retrieval.',
+      })
+    }
+
+    if (options.includePriorTasks === true && this.config.vectorStore && this.config.embeddingProvider) {
+      intents.push({
+        target: 'archive',
+        query: this.buildRetrievalQuery(input.normalizedTask, 'archive'),
+        priority: 70,
+        reason: 'Similar prior tasks were requested and the vector archive is available.',
+        limit: archiveLimit,
+      })
+    }
+
+    return this.normalizeRetrievalIntents(intents, archiveLimit)
+  }
+
+  /**
+   * Builds a bundle using a planned retrieval path with typed intents and traceable planner decisions.
+   *
+   * @param agent - The agent configuration including identity and experience settings
+   * @param task - The task context containing title, description, and related metadata
+   * @param options - Optional planning options or explicit retrieval intents
+   * @returns A promise that resolves to an AccordionBundle with planner trace entries
+   */
+  async searchAndCompose(
+    agent: AgentConfig,
+    task: TaskContext,
+    options: SearchComposeOptions = {},
+  ): Promise<AccordionBundle> {
+    const input = this.prepareComposeInput(agent, task, options.maxTokens)
+    const archiveLimit = this.normalizePositiveInteger(options.priorTaskLimit) ?? 3
+    const trace: AccordionTraceEntry[] = []
+    const packets = this.buildBasePackets(input.normalizedAgent, input.normalizedTask, trace)
+    const intents = this.normalizeRetrievalIntents(
+      options.retrievalIntents ?? this.planRetrieval(input.normalizedAgent, input.normalizedTask, options),
+      archiveLimit,
+    )
+
+    trace.push(...intents.map(intent => this.createIntentTraceEntry('plan', 'selected', intent, intent.reason)))
+
+    let experienceLoaded = false
+
+    for (const intent of intents) {
+      if (intent.target === 'experience') {
+        if (experienceLoaded) {
+          trace.push(this.createIntentTraceEntry('plan', 'skipped', intent, 'Skipped duplicate experience intent because experience was already loaded.'))
+          continue
+        }
+
+        const loaded = await this.appendExperiencePacket(packets, trace, input.normalizedAgent, intent)
+        experienceLoaded = experienceLoaded || loaded
+        continue
+      }
+
+      await this.appendArchivePacket(
+        packets,
+        trace,
+        input.normalizedTask,
+        intent.limit ?? archiveLimit,
+        intent,
+      )
+    }
+
+    return this.finalizeBundle(input, packets, trace)
+  }
+
+  private prepareComposeInput(
+    agent: AgentConfig,
+    task: TaskContext,
+    maxTokens?: number,
+  ): ComposeInput {
     const normalizedAgent = this.normalizeAgentConfig(agent)
     const normalizedTask = this.normalizeTaskContext(task)
-    const maxTokens =
-      this.normalizePositiveInteger(options.maxTokens)
-      ?? normalizedAgent.maxTokens
-      ?? this.normalizePositiveInteger(this.config.maxTokens)
-      ?? DEFAULT_MAX_TOKENS
-    const packets: AccordionPacket[] = []
-    const trace: AccordionTraceEntry[] = []
 
-    // L0 — Identity (always loaded, highest priority)
+    return {
+      normalizedAgent,
+      normalizedTask,
+      maxTokens:
+        this.normalizePositiveInteger(maxTokens)
+        ?? normalizedAgent.maxTokens
+        ?? this.normalizePositiveInteger(this.config.maxTokens)
+        ?? DEFAULT_MAX_TOKENS,
+    }
+  }
+
+  private buildBasePackets(
+    agent: AgentConfig,
+    task: TaskContext,
+    trace: AccordionTraceEntry[],
+  ): AccordionPacket[] {
+    const packets: AccordionPacket[] = []
+
     const identityDate = new Date().toISOString().split('T')[0]
-    const identityCacheKey = this.createCacheKey('identity', normalizedAgent.id, normalizedAgent.identity, identityDate)
+    const identityCacheKey = this.createCacheKey('identity', agent.id, agent.identity, identityDate)
     const cachedIdentityPacket = this.getCached(identityCacheKey)
     const identityPacket = cachedIdentityPacket
-      ?? this.buildIdentityPacket(normalizedAgent, identityDate)
+      ?? this.buildIdentityPacket(agent, identityDate)
     this.setCache(identityCacheKey, identityPacket)
     packets.push(identityPacket)
     trace.push(
@@ -99,68 +241,131 @@ export class AccordionComposer {
         cachedIdentityPacket
           ? 'Loaded identity packet from static cache.'
           : 'Loaded the identity tier for the active agent.',
-        cachedIdentityPacket ? 'static-cache' : identityPacket.metadata?.source
-      )
+        cachedIdentityPacket ? 'static-cache' : identityPacket.metadata?.source,
+      ),
     )
 
-    // L1 — Task (always loaded)
-    const taskPacket = this.buildTaskPacket(normalizedTask)
+    const taskPacket = this.buildTaskPacket(task)
     packets.push(taskPacket)
     trace.push(this.createTraceEntry('compose', 'selected', taskPacket, 'Loaded the current task context.'))
 
-    // L1 — Goal (if provided)
-    if (normalizedTask.goal) {
-      const goalPacket = this.buildGoalPacket(normalizedTask.goal)
+    if (task.goal) {
+      const goalPacket = this.buildGoalPacket(task.goal)
       packets.push(goalPacket)
       trace.push(this.createTraceEntry('compose', 'selected', goalPacket, 'Loaded the active goal context.'))
     }
 
-    // L1 — Repo (if provided)
-    if (normalizedTask.repo) {
-      const repoPacket = this.buildRepoPacket(normalizedTask.repo)
+    if (task.repo) {
+      const repoPacket = this.buildRepoPacket(task.repo)
       packets.push(repoPacket)
       trace.push(this.createTraceEntry('compose', 'selected', repoPacket, 'Loaded repository context attached to the task.'))
     }
 
-    // L1 — Handoff (if provided)
-    if (normalizedTask.handoff) {
-      const handoffPacket = this.buildHandoffPacket(normalizedTask.handoff)
+    if (task.handoff) {
+      const handoffPacket = this.buildHandoffPacket(task.handoff)
       packets.push(handoffPacket)
       trace.push(this.createTraceEntry('compose', 'selected', handoffPacket, 'Loaded handoff context from a previous agent.'))
     }
 
-    // L2 — Experience (loaded from file if path provided)
-    if (normalizedAgent.experiencePath) {
-      const expPacket = await this.buildExperiencePacket(normalizedAgent.id, normalizedAgent.experiencePath)
-      if (expPacket) {
-        packets.push(expPacket)
-        trace.push(this.createTraceEntry('compose', 'selected', expPacket, 'Loaded learned experience for the agent.'))
+    return packets
+  }
+
+  private async appendExperiencePacket(
+    packets: AccordionPacket[],
+    trace: AccordionTraceEntry[],
+    agent: AgentConfig,
+    intent?: RetrievalIntent,
+  ): Promise<boolean> {
+    if (!agent.experiencePath) {
+      if (intent) {
+        trace.push(this.createIntentTraceEntry('plan', 'skipped', intent, 'Skipped planned experience retrieval because the agent does not define an experience path.'))
       }
+      return false
     }
 
-    // L3 — Archive (semantic retrieval from vector store)
-    if (options.includePriorTasks === true && this.config.vectorStore) {
-      const archivePackets = await this.retrieveArchive(
-        normalizedTask,
-        this.normalizePositiveInteger(options.priorTaskLimit) ?? 3
-      )
-      packets.push(...archivePackets)
-      for (const archivePacket of archivePackets) {
-        trace.push(this.createTraceEntry('compose', 'selected', archivePacket, 'Retrieved similar prior tasks from the archive.', 'archive-search'))
+    if (packets.some(packet => packet.tier === 'experience')) {
+      if (intent) {
+        trace.push(this.createIntentTraceEntry('plan', 'skipped', intent, 'Skipped planned experience retrieval because the experience tier is already present.'))
       }
+      return false
     }
 
-    const finalPackets = enforceBudget(packets, maxTokens, this.config.tokenizer)
-    const totalTokens = finalPackets.reduce((sum, p) => sum + estimateTokens(p.content, this.config.tokenizer), 0)
+    const packet = await this.buildExperiencePacket(agent.id, agent.experiencePath)
+    if (!packet) {
+      if (intent) {
+        trace.push(this.createIntentTraceEntry('compose', 'skipped', intent, 'Planned experience retrieval did not return a packet.'))
+      }
+      return false
+    }
+
+    packets.push(packet)
+    trace.push(
+      this.createTraceEntry(
+        'compose',
+        'selected',
+        packet,
+        intent
+          ? 'Loaded learned experience for the planned retrieval intent.'
+          : 'Loaded learned experience for the agent.',
+        packet.metadata?.source,
+        intent,
+      ),
+    )
+    return true
+  }
+
+  private async appendArchivePacket(
+    packets: AccordionPacket[],
+    trace: AccordionTraceEntry[],
+    task: TaskContext,
+    limit: number,
+    intent?: RetrievalIntent,
+  ): Promise<boolean> {
+    const result = await this.retrieveArchive(task, limit, intent?.query)
+    if (!result.packet) {
+      if (intent) {
+        const unavailableReason =
+          !this.config.vectorStore || !this.config.embeddingProvider
+            ? 'Skipped planned archive retrieval because the vector archive is not configured.'
+            : 'Planned archive retrieval returned no matches.'
+        trace.push(this.createIntentTraceEntry('compose', 'skipped', intent, unavailableReason))
+      }
+      return false
+    }
+
+    packets.push(result.packet)
+    trace.push(
+      this.createTraceEntry(
+        'compose',
+        'selected',
+        result.packet,
+        intent
+          ? 'Retrieved similar prior tasks for the planned archive intent.'
+          : 'Retrieved similar prior tasks from the archive.',
+        'archive-search',
+        intent,
+      ),
+    )
+    trace.push(...this.createArchiveMatchTraceEntries(result.matches, result.query, intent))
+    return true
+  }
+
+  private finalizeBundle(
+    input: ComposeInput,
+    packets: AccordionPacket[],
+    trace: AccordionTraceEntry[],
+  ): AccordionBundle {
+    const finalPackets = enforceBudget(packets, input.maxTokens, this.config.tokenizer)
+    const totalTokens = finalPackets.reduce((sum, packet) => sum + estimateTokens(packet.content, this.config.tokenizer), 0)
     trace.push(...this.buildBudgetTrace(packets, finalPackets))
 
     return {
-      agentId: normalizedAgent.id,
-      taskId: normalizedTask.id,
+      agentId: input.normalizedAgent.id,
+      taskId: input.normalizedTask.id,
       sessionId: this.sessionId,
       packets: finalPackets,
       totalTokens,
-      maxTokens,
+      maxTokens: input.maxTokens,
       expansionLog: [],
       trace,
     }
@@ -282,8 +487,8 @@ export class AccordionComposer {
         const { packet, fromPending } = await this.getOrCreatePendingExpansion(
           cacheKey,
           async () => {
-            const archivePackets = await this.retrieveArchive(task, limit)
-            return archivePackets[0] ?? null
+            const archiveResult = await this.retrieveArchive(task, limit)
+            return archiveResult.packet
           },
         )
         if (packet) {
@@ -604,14 +809,19 @@ export class AccordionComposer {
 
   private async retrieveArchive(
     task: TaskContext,
-    limit: number
-  ): Promise<AccordionPacket[]> {
-    if (!this.config.vectorStore || !this.config.embeddingProvider) return []
+    limit: number,
+    queryOverride?: string
+  ): Promise<ArchiveRetrievalResult> {
+    if (!this.config.vectorStore || !this.config.embeddingProvider) {
+      return { packet: null, matches: [], query: '' }
+    }
 
     try {
-      const embedding = await this.config.embeddingProvider.embed(
+      const retrievalQuery = this.normalizeRequiredString(
+        queryOverride,
         `${task.title} ${task.description ?? ''}`
       )
+      const embedding = await this.config.embeddingProvider.embed(retrievalQuery)
 
       const { QdrantClient } = await import('@qdrant/js-client-rest')
       const client = new QdrantClient({ url: this.config.vectorStore.url, checkCompatibility: false })
@@ -626,34 +836,44 @@ export class AccordionComposer {
         with_payload: true,
       })
 
-      if (!results.length) return []
+      if (!results.length) {
+        return { packet: null, matches: [], query: retrievalQuery }
+      }
 
-      const content = results
-        .map(r => {
-          const title = (r.payload?.title as string) ?? r.id
-          const desc = (r.payload?.content as string) ?? ''
-          const score = (r.score * 100).toFixed(0)
-          return `### ${title} (relevance: ${score}%)\n${desc}`
+      const matches: ArchiveSearchMatch[] = results.map(result => ({
+        title: (result.payload?.title as string) ?? String(result.id),
+        content: (result.payload?.content as string) ?? '',
+        score: result.score,
+      }))
+
+      const content = matches
+        .map(match => {
+          const score = ((match.score ?? 0) * 100).toFixed(0)
+          return `### ${match.title} (relevance: ${score}%)\n${match.content}`
         })
         .join('\n\n')
 
-      return [{
-        id: uuid(),
-        tier: 'archive',
-        priority: TIER_PRIORITY.archive,
-        maxTokens: 1500,
-        content: `## Similar Past Tasks\n\n${content}`,
-        summary: `${results.length} similar past tasks retrieved`,
-        expanded: true,
-        createdAt: new Date(),
-        metadata: {
-          source: 'archive-search',
-          whySelected: 'Similar prior tasks were retrieved from the archive.',
-          score: results[0]?.score,
+      return {
+        packet: {
+          id: uuid(),
+          tier: 'archive',
+          priority: TIER_PRIORITY.archive,
+          maxTokens: 1500,
+          content: `## Similar Past Tasks\n\n${content}`,
+          summary: `${matches.length} similar past tasks retrieved`,
+          expanded: true,
+          createdAt: new Date(),
+          metadata: {
+            source: 'archive-search',
+            whySelected: 'Similar prior tasks were retrieved from the archive.',
+            score: matches[0]?.score,
+          },
         },
-      }]
+        matches,
+        query: retrievalQuery,
+      }
     } catch {
-      return [] // Qdrant unreachable — degrade gracefully
+      return { packet: null, matches: [], query: queryOverride ?? '' } // Qdrant unreachable during archive retrieval
     }
   }
 
@@ -750,12 +970,98 @@ export class AccordionComposer {
     }
   }
 
+  private buildRetrievalQuery(task: TaskContext, target: RetrievalIntent['target']): string {
+    const parts = [
+      task.title,
+      task.description,
+      task.type ? `type: ${task.type}` : undefined,
+      task.priority ? `priority: ${task.priority}` : undefined,
+      task.owner ? `owner: ${task.owner}` : undefined,
+      task.goal?.title ? `goal: ${task.goal.title}` : undefined,
+      task.repo?.name ? `repo: ${task.repo.name}` : undefined,
+      task.requirements?.length ? `requirements: ${task.requirements.join('; ')}` : undefined,
+    ].filter((part): part is string => part !== undefined)
+
+    const prefix =
+      target === 'experience'
+        ? 'Relevant agent experience for'
+        : 'Similar prior tasks for'
+
+    return `${prefix} ${parts.join(' | ')}`.trim()
+  }
+
+  private normalizeRetrievalIntents(
+    intents: RetrievalIntent[],
+    defaultArchiveLimit: number,
+  ): RetrievalIntent[] {
+    return intents
+      .map(intent => {
+        const target: RetrievalIntent['target'] = intent.target === 'experience' ? 'experience' : 'archive'
+        const defaultQuery =
+          target === 'experience'
+            ? 'Relevant agent experience'
+            : 'Similar prior tasks'
+        const defaultReason =
+          target === 'experience'
+            ? 'Agent experience should be consulted for this task.'
+            : 'Archive retrieval should search for similar prior tasks.'
+
+        return {
+          target,
+          query: this.normalizeRequiredString(intent.query, defaultQuery),
+          priority: this.normalizeFiniteNumber(intent.priority) ?? (target === 'experience' ? 90 : 70),
+          reason: this.normalizeRequiredString(intent.reason, defaultReason),
+          limit: target === 'archive'
+            ? this.normalizePositiveInteger(intent.limit) ?? defaultArchiveLimit
+            : undefined,
+        }
+      })
+      .sort((left, right) => right.priority - left.priority)
+  }
+
+  private createArchiveMatchTraceEntries(
+    matches: ArchiveSearchMatch[],
+    query: string,
+    intent?: RetrievalIntent,
+  ): AccordionTraceEntry[] {
+    return matches.map((match, index) => ({
+      timestamp: new Date(),
+      stage: 'compose',
+      action: 'selected',
+      tier: 'archive',
+      source: 'archive-match',
+      reason: `Archive match ${index + 1} selected: ${match.title}`,
+      score: match.score,
+      query: query || intent?.query,
+      priority: intent?.priority,
+    }))
+  }
+
+  private createIntentTraceEntry(
+    stage: AccordionTraceEntry['stage'],
+    action: AccordionTraceEntry['action'],
+    intent: RetrievalIntent,
+    reason: string,
+  ): AccordionTraceEntry {
+    return {
+      timestamp: new Date(),
+      stage,
+      action,
+      tier: intent.target,
+      source: 'retrieval-planner',
+      reason,
+      query: intent.query,
+      priority: intent.priority,
+    }
+  }
+
   private createTraceEntry(
     stage: AccordionTraceEntry['stage'],
     action: AccordionTraceEntry['action'],
     packet: AccordionPacket,
     reason: string,
-    sourceOverride?: string
+    sourceOverride?: string,
+    intent?: RetrievalIntent,
   ): AccordionTraceEntry {
     return {
       timestamp: new Date(),
@@ -767,6 +1073,8 @@ export class AccordionComposer {
       reason,
       tokenEstimate: estimateTokens(packet.content, this.config.tokenizer),
       score: packet.metadata?.score,
+      query: intent?.query,
+      priority: intent?.priority,
     }
   }
 

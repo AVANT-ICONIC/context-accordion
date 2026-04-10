@@ -56,6 +56,8 @@ import { AccordionComposer } from 'context-accordion'
 |--------|-------------|-----------|
 | `new AccordionComposer(config?)` | Create a composer instance | Stable |
 | `composer.compose(agent, task, options?)` | Build an accordion bundle | Stable |
+| `composer.planRetrieval(agent, task, options?)` | Create ordered retrieval intents before loading optional tiers | Stable |
+| `composer.searchAndCompose(agent, task, options?)` | Build a bundle using planned retrieval intents and planner traces | Stable |
 | `composer.expand(bundle, options)` | Expand a tier on-demand | Stable |
 | `composer.render(bundle)` | Render bundle to string | Stable |
 | `composer.index(options)` | Index a task for archive retrieval | Stable |
@@ -88,6 +90,9 @@ import type {
   ExpandOptions,
   ExpansionEvent,
   EmbeddingProvider,
+  RetrievalIntent,
+  RetrievalIntentTarget,
+  SearchComposeOptions,
   VectorStoreConfig,
   IndexTaskOptions,
   TaskContext,
@@ -231,11 +236,14 @@ Use `clearSessionCache()` to reset session-level caching and `AccordionComposer.
 
 Every `AccordionBundle` includes a `trace` array that records:
 
+- retrieval planning decisions from `planRetrieval()` / `searchAndCompose()`
 - packet selection during `compose()`
+- per-match archive trace details during archive retrieval
 - cache hits during `compose()` and `expand()`
 - skipped expansions
 - budget truncation and drops
 
+Trace entries may also include retrieval `query` and `priority` metadata for planned retrieval paths.
 Each `AccordionPacket` may also include `metadata` describing its source, selection reason, and optional retrieval score.
 
 ---

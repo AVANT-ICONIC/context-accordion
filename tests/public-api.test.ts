@@ -12,12 +12,25 @@ describe('public API entrypoint', () => {
     expect(typeof publicApi.distill).toBe('function')
 
     const composer = new publicApi.AccordionComposer({ maxTokens: 256 })
+    expect(typeof composer.planRetrieval).toBe('function')
+    expect(typeof composer.searchAndCompose).toBe('function')
+
+    const intents = composer.planRetrieval(
+      { id: 'public-api', identity: 'You are a public API test agent.' },
+      { id: 'public-task', title: 'Verify public exports.' },
+    )
     const bundle = await composer.compose(
       { id: 'public-api', identity: 'You are a public API test agent.' },
       { id: 'public-task', title: 'Verify public exports.' }
     )
+    const plannedBundle = await composer.searchAndCompose(
+      { id: 'public-api', identity: 'You are a public API test agent.' },
+      { id: 'public-task', title: 'Verify public exports.' }
+    )
 
+    expect(Array.isArray(intents)).toBe(true)
     expect(bundle.trace.length).toBeGreaterThan(0)
+    expect(plannedBundle.trace.length).toBeGreaterThan(0)
     expect(publicApi.accordionTraceToMarkdown(bundle)).toContain('Accordion Trace')
   })
 })

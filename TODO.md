@@ -26,10 +26,10 @@
 
 ## Retrieval control plane
 
-- [ ] Add a planned retrieval API such as `searchAndCompose()` or `planAndCompose()`.
-- [ ] Introduce typed retrieval intents for `experience` and `archive`.
-- [ ] Record retrieval planning decisions in `bundle.trace`.
-- [ ] Add per-result archive trace details beyond the top combined archive packet.
+- [x] Add a planned retrieval API such as `searchAndCompose()` or `planAndCompose()`.
+- [x] Introduce typed retrieval intents for `experience` and `archive`.
+- [x] Record retrieval planning decisions in `bundle.trace`.
+- [x] Add per-result archive trace details beyond the top combined archive packet.
 - [ ] Add directory-aware retrieval as an optional provider instead of hardwiring it into the composer.
 
 ## Runtime ergonomics
