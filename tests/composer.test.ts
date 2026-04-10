@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { AccordionComposer } from '../src/composer'
 import type { AgentConfig, TaskContext, ExpandOptions } from '../src/types'
 import { promises as fs } from 'fs'
@@ -111,6 +111,22 @@ describe('AccordionComposer', () => {
     expect(identity?.priority).toBe(100)
   })
 
+  it('static identity cache keys include the identity content', async () => {
+    AccordionComposer.clearGlobalCache()
+
+    const firstComposer = new AccordionComposer()
+    await firstComposer.compose(agent, task)
+
+    const secondComposer = new AccordionComposer()
+    const bundle = await secondComposer.compose({
+      ...agent,
+      identity: 'You are a staff security engineer.',
+    }, task)
+
+    const identityPacket = bundle.packets.find(p => p.tier === 'identity')
+    expect(identityPacket?.content).toContain('staff security engineer')
+  })
+
   it('skips archive tier when no vector store configured', async () => {
     const composer = new AccordionComposer() // no vectorStore
     const bundle = await composer.compose(agent, task, { includePriorTasks: true })
@@ -188,6 +204,61 @@ describe('AccordionComposer', () => {
       expect(secondExpand.packets.filter(p => p.tier === 'experience').length).toBe(1)
     })
 
+    it('uses bundle-specific session cache keys when expanding experience packets', async () => {
+      const firstExperiencePath = path.join(tempDir, 'experience-one.md')
+      const secondExperiencePath = path.join(tempDir, 'experience-two.md')
+      await fs.writeFile(firstExperiencePath, '# Experience\n\nFirst agent experience.')
+      await fs.writeFile(secondExperiencePath, '# Experience\n\nSecond agent experience.')
+
+      const composer = new AccordionComposer()
+      const firstBundle = await composer.compose(agent, task)
+      const secondBundle = await composer.compose(
+        { ...agent, id: 'reviewer', identity: 'You are a code reviewer.' },
+        { ...task, id: 'task-002', title: 'Review authentication bug' },
+      )
+
+      const reason = 'Need past experience context'
+      const firstExpandedBundle = await composer.expand(firstBundle, {
+        tier: 'experience',
+        reason,
+        experiencePath: firstExperiencePath,
+      })
+      const secondExpandedBundle = await composer.expand(secondBundle, {
+        tier: 'experience',
+        reason,
+        experiencePath: secondExperiencePath,
+      })
+
+      expect(firstExpandedBundle.packets.find(p => p.tier === 'experience')?.content).toContain('First agent experience')
+      expect(secondExpandedBundle.packets.find(p => p.tier === 'experience')?.content).toContain('Second agent experience')
+    })
+
+    it('coalesces duplicate in-flight experience expansions', async () => {
+      const experiencePath = path.join(tempDir, 'experience-concurrent.md')
+      await fs.writeFile(experiencePath, '# Experience\n\nShared experience content.')
+
+      const readFileSpy = vi.spyOn(fs, 'readFile')
+      const composer = new AccordionComposer()
+      const bundle = await composer.compose(agent, task)
+      const expandOptions: ExpandOptions = {
+        tier: 'experience',
+        reason: 'Need concurrent experience context',
+        experiencePath,
+      }
+
+      const [firstExpandedBundle, secondExpandedBundle] = await Promise.all([
+        composer.expand(bundle, expandOptions),
+        composer.expand(bundle, expandOptions),
+      ])
+
+      expect(readFileSpy).toHaveBeenCalledTimes(1)
+      expect(firstExpandedBundle.packets.some(p => p.tier === 'experience')).toBe(true)
+      expect(secondExpandedBundle.packets.some(p => p.tier === 'experience')).toBe(true)
+      expect(secondExpandedBundle.trace.some(entry => entry.stage === 'expand' && entry.action === 'cached' && entry.source === 'in-flight')).toBe(true)
+
+      readFileSpy.mockRestore()
+    })
+
     it('with non-existent experience file returns original bundle gracefully', async () => {
       const composer = new AccordionComposer()
       const bundle = await composer.compose(agent, task)
@@ -260,6 +331,22 @@ describe('AccordionComposer', () => {
       const experiencePacket = bundle.packets.find(p => p.tier === 'experience')
 
       expect(experiencePacket?.content).toContain('Updated first content')
+    })
+
+    it('static experience cache keys include the experience path', async () => {
+      const firstExperiencePath = path.join(tempDir, 'experience-path-one.md')
+      const secondExperiencePath = path.join(tempDir, 'experience-path-two.md')
+      await fs.writeFile(firstExperiencePath, '# Experience\n\nPath one content.')
+      await fs.writeFile(secondExperiencePath, '# Experience\n\nPath two content.')
+
+      const firstComposer = new AccordionComposer()
+      await firstComposer.compose({ ...agent, experiencePath: firstExperiencePath }, task)
+
+      const secondComposer = new AccordionComposer()
+      const bundle = await secondComposer.compose({ ...agent, experiencePath: secondExperiencePath }, task)
+      const experiencePacket = bundle.packets.find(p => p.tier === 'experience')
+
+      expect(experiencePacket?.content).toContain('Path two content')
     })
 
     it('clearSessionCache() clears the session cache', async () => {

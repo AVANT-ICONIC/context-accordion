@@ -12,6 +12,7 @@
 - [x] Disable noisy Qdrant compatibility warnings during graceful degradation paths.
 - [x] Add packet metadata, bundle trace entries, and `accordionTraceToMarkdown()`.
 - [x] Expand the test suite around budgeting, cache behavior, trace rendering, and compose normalization.
+- [x] Scope identity and experience caches to their actual inputs and coalesce duplicate in-flight expansions.
 
 ## Release blockers
 
@@ -42,4 +43,4 @@
 
 - [ ] Add optional temporal facts as a separate provider module.
 - [ ] Add a dedicated debug adapter/subpath if trace rendering grows beyond markdown.
-- [ ] Add concurrency protection for duplicate in-flight `expand()` calls.
+- [x] Add concurrency protection for duplicate in-flight `expand()` calls.

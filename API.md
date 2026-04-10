@@ -219,12 +219,11 @@ The public API handles errors gracefully:
 
 The composer uses two cache layers:
 
-1. **Static cache** (cross-instance): Identity and experience packets are cached by content hash
-2. **Session cache** (per-instance): Expand results are cached within a session
+1. **Static cache** (cross-instance): Identity and experience packets are cached by derived input signatures.
+2. **Session cache** (per-instance): Expand results are cached within a session.
+3. Duplicate in-flight `expand()` calls for the same experience or archive inputs are coalesced per composer instance.
 
 Use `clearSessionCache()` to reset session-level caching and `AccordionComposer.clearGlobalCache()` to reset the shared static cache.
-
-> It remains outside the stable surface for the full `0.x` series.
 
 ---
 

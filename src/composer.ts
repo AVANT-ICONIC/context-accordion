@@ -33,8 +33,9 @@ export class AccordionComposer {
   private config: AccordionConfig
   private sessionId: string
   private sessionCache: Map<string, AccordionPacket> = new Map()
+  private pendingExpansions: Map<string, Promise<AccordionPacket | null>> = new Map()
 
-  // Static cache shared across instances — keyed by content hash
+  // Static cache shared across instances and keyed by derived input signatures.
   private static cache: Map<string, { packet: AccordionPacket; expires: number; createdAt: number }> = new Map()
 
   /**
@@ -83,10 +84,12 @@ export class AccordionComposer {
     const trace: AccordionTraceEntry[] = []
 
     // L0 — Identity (always loaded, highest priority)
-    const cachedIdentityPacket = this.getCached(`identity:${normalizedAgent.id}`)
+    const identityDate = new Date().toISOString().split('T')[0]
+    const identityCacheKey = this.createCacheKey('identity', normalizedAgent.id, normalizedAgent.identity, identityDate)
+    const cachedIdentityPacket = this.getCached(identityCacheKey)
     const identityPacket = cachedIdentityPacket
-      ?? this.buildIdentityPacket(normalizedAgent)
-    this.setCache(`identity:${normalizedAgent.id}`, identityPacket)
+      ?? this.buildIdentityPacket(normalizedAgent, identityDate)
+    this.setCache(identityCacheKey, identityPacket)
     packets.push(identityPacket)
     trace.push(
       this.createTraceEntry(
@@ -182,7 +185,7 @@ export class AccordionComposer {
     const reason = this.normalizeRequiredString(options.reason, 'Expansion requested')
     const limit = this.normalizePositiveInteger(options.limit) ?? 3
     const experiencePath = this.normalizeOptionalString(options.experiencePath) ?? ''
-    const cacheKey = `expand:${options.tier}:${reason}`
+    const cacheKey = this.createExpandCacheKey(bundle, options.tier, reason, limit, experiencePath)
     const appendTrace = (entry: AccordionTraceEntry) => [...bundle.trace, entry]
     const cachedPacket = this.sessionCache.get(cacheKey)
     
@@ -224,7 +227,10 @@ export class AccordionComposer {
 
     try {
       if (options.tier === 'experience') {
-        const packet = await this.buildExperiencePacket(bundle.agentId, experiencePath)
+        const { packet, fromPending } = await this.getOrCreatePendingExpansion(
+          cacheKey,
+          () => this.buildExperiencePacket(bundle.agentId, experiencePath)
+        )
         if (packet) {
           const tierExists = bundle.packets.some(p => p.tier === packet.tier)
           if (tierExists) {
@@ -258,14 +264,29 @@ export class AccordionComposer {
             packets: [...bundle.packets, packet],
             totalTokens: bundle.totalTokens + tokensAdded,
             expansionLog: [...bundle.expansionLog, event],
-            trace: appendTrace(this.createTraceEntry('expand', 'expanded', packet, 'Expanded the bundle with learned experience.', packet.metadata?.source)),
+            trace: appendTrace(
+              this.createTraceEntry(
+                'expand',
+                fromPending ? 'cached' : 'expanded',
+                packet,
+                fromPending
+                  ? 'Expanded the bundle using an in-flight experience load.'
+                  : 'Expanded the bundle with learned experience.',
+                fromPending ? 'in-flight' : packet.metadata?.source,
+              ),
+            ),
           }
         }
       } else if (options.tier === 'archive') {
         const task = { id: this.normalizeRequiredString(bundle.taskId, DEFAULT_TASK_ID), title: reason }
-        const archivePackets = await this.retrieveArchive(task, limit)
-        if (archivePackets.length > 0) {
-          const packet = archivePackets[0]
+        const { packet, fromPending } = await this.getOrCreatePendingExpansion(
+          cacheKey,
+          async () => {
+            const archivePackets = await this.retrieveArchive(task, limit)
+            return archivePackets[0] ?? null
+          },
+        )
+        if (packet) {
           const tierExists = bundle.packets.some(p => p.tier === packet.tier)
           if (tierExists) {
             const event: ExpansionEvent = {
@@ -298,7 +319,17 @@ export class AccordionComposer {
             packets: [...bundle.packets, packet],
             totalTokens: bundle.totalTokens + tokensAdded,
             expansionLog: [...bundle.expansionLog, event],
-            trace: appendTrace(this.createTraceEntry('expand', 'expanded', packet, 'Expanded the bundle with archive retrieval results.', 'archive-search')),
+            trace: appendTrace(
+              this.createTraceEntry(
+                'expand',
+                fromPending ? 'cached' : 'expanded',
+                packet,
+                fromPending
+                  ? 'Expanded the bundle using an in-flight archive retrieval.'
+                  : 'Expanded the bundle with archive retrieval results.',
+                fromPending ? 'in-flight' : 'archive-search',
+              ),
+            ),
           }
         }
       } else {
@@ -351,6 +382,7 @@ export class AccordionComposer {
    */
   clearSessionCache(): void {
     this.sessionCache.clear()
+    this.pendingExpansions.clear()
   }
 
   /**
@@ -421,14 +453,14 @@ export class AccordionComposer {
   // Packet builders
   // ---------------------------------------------------------------------------
 
-  private buildIdentityPacket(agent: AgentConfig): AccordionPacket {
+  private buildIdentityPacket(agent: AgentConfig, identityDate: string): AccordionPacket {
     const now = new Date()
     return {
       id: uuid(),
       tier: 'identity',
       priority: TIER_PRIORITY.identity,
       maxTokens: 1000,
-      content: `${agent.identity}\n\n## Session\nDate: ${now.toISOString().split('T')[0]}\nAgent: ${agent.id}`,
+      content: `${agent.identity}\n\n## Session\nDate: ${identityDate}\nAgent: ${agent.id}`,
       summary: `Agent: ${agent.id}`,
       expanded: true,
       createdAt: now,
@@ -540,7 +572,7 @@ export class AccordionComposer {
     agentId: string,
     experiencePath: string
   ): Promise<AccordionPacket | null> {
-    const cacheKey = `experience:${agentId}`
+    const cacheKey = this.createCacheKey('experience', agentId, experiencePath)
     const cached = this.getCached(cacheKey)
     if (cached) return cached
 
@@ -668,6 +700,53 @@ export class AccordionComposer {
       const oldestKey = AccordionComposer.cache.keys().next().value
       if (!oldestKey) break
       AccordionComposer.cache.delete(oldestKey)
+    }
+  }
+
+  private createCacheKey(...parts: Array<string | number>): string {
+    return JSON.stringify(parts)
+  }
+
+  private createExpandCacheKey(
+    bundle: AccordionBundle,
+    tier: TierLevel,
+    reason: string,
+    limit: number,
+    experiencePath: string,
+  ): string {
+    if (tier === 'experience') {
+      return this.createCacheKey('expand', tier, bundle.agentId, experiencePath)
+    }
+
+    if (tier === 'archive') {
+      return this.createCacheKey('expand', tier, this.normalizeRequiredString(bundle.taskId, DEFAULT_TASK_ID), reason, limit)
+    }
+
+    return this.createCacheKey('expand', tier, bundle.agentId, this.normalizeRequiredString(bundle.taskId, DEFAULT_TASK_ID), reason)
+  }
+
+  private async getOrCreatePendingExpansion(
+    key: string,
+    loader: () => Promise<AccordionPacket | null>,
+  ): Promise<{ packet: AccordionPacket | null; fromPending: boolean }> {
+    const existing = this.pendingExpansions.get(key)
+    if (existing) {
+      return {
+        packet: await existing,
+        fromPending: true,
+      }
+    }
+
+    const pending = loader().finally(() => {
+      if (this.pendingExpansions.get(key) === pending) {
+        this.pendingExpansions.delete(key)
+      }
+    })
+    this.pendingExpansions.set(key, pending)
+
+    return {
+      packet: await pending,
+      fromPending: false,
     }
   }
 
