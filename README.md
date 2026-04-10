@@ -298,8 +298,10 @@ new AccordionComposer(config?)
 |--------|------|---------|-------------|
 | `maxTokens` | `number` | `8000` | Default token budget |
 | `cacheTtl` | `number` | `300000` | Static cache TTL in ms |
+| `cacheMaxSize` | `number` | `1000` | Max shared cache entries before eviction |
 | `vectorStore` | `object` | - | Qdrant config |
 | `embeddingProvider` | `object` | - | Ollama or OpenAI |
+| `tokenizer` | `function` | - | Custom token estimator for budgeting |
 | `onExpand` | `function` | - | Expansion event callback |
 
 ### Methods
