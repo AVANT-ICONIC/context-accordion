@@ -158,6 +158,8 @@ import { enforceBudget, estimateTokens, TIER_PRIORITY } from 'context-accordion'
 | `estimateTokens(text)` | Token estimation | `@alpha` — Internal |
 | `TIER_PRIORITY` | Priority mapping for tiers | `@alpha` — Internal |
 
+These helpers intentionally remain `@alpha` until `1.0.0` while token accounting semantics continue to settle.
+
 ### Experience Distillation
 
 ```typescript
@@ -222,6 +224,8 @@ The composer uses two cache layers:
 
 Use `clearSessionCache()` to reset session-level caching and `AccordionComposer.clearGlobalCache()` to reset the shared static cache.
 
+> It remains outside the stable surface for the full `0.x` series.
+
 ---
 
 ## Traceability
@@ -252,6 +256,16 @@ For production Harbor integrations, **always pin to a specific version**:
 ```
 
 Do not use `^` or `~` ranges for alpha versions.
+
+### Release Workflow
+
+Publishing is handled by the manual `Release` GitHub Actions workflow:
+
+- select the git ref to publish from
+- choose the npm dist-tag (`alpha`, `beta`, or `latest`)
+- optionally run a dry run before the real publish step
+
+The workflow runs `npm run verify` before publishing and rejects prerelease versions tagged as `latest`.
 
 ### Adapter-First Pattern
 

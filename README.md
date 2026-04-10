@@ -90,6 +90,7 @@ The public API is exported from the main entry point and subpath exports.
 | Export | Description |
 |--------|-------------|
 | `AccordionComposer` | Main class for context composition |
+| `accordionTraceToMarkdown` | Debug renderer for bundle trace output |
 | `OllamaEmbedding`, `OpenAIEmbedding` | Embedding providers |
 | Types (AccordionBundle, AccordionPacket, AgentConfig, TaskContext, etc.) | TypeScript interfaces |
 
@@ -98,6 +99,9 @@ The public API is exported from the main entry point and subpath exports.
 |--------|-------------|
 | `estimateTokens`, `enforceBudget`, `TIER_PRIORITY` | Budget utilities |
 | `distill` | Experience distillation helper |
+
+These helpers intentionally remain alpha until `1.0.0` because token accounting and lifecycle automation are still evolving.
+All other exports listed in the stable table above are the supported public surface for the alpha series.
 
 ### Wrapper Boundary — Framework Integration
 
@@ -335,6 +339,12 @@ cd context-accordion
 npm install
 npm run verify
 ```
+
+### Release Flow
+
+- CI runs `npm run verify` on pushes and pull requests.
+- Manual publishes use the `Release` GitHub Actions workflow.
+- Pre-release versions such as `0.1.0-alpha.1` must publish with the `alpha` or `beta` dist-tag, not `latest`.
 
 ---
 

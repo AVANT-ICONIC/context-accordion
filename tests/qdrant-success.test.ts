@@ -8,13 +8,14 @@ const qdrantMocks = vi.hoisted(() => ({
 }))
 
 vi.mock('@qdrant/js-client-rest', () => ({
-  QdrantClient: vi.fn().mockImplementation((args: unknown) => {
-    qdrantMocks.constructorArgs(args)
-    return {
-      upsert: qdrantMocks.upsert,
-      search: qdrantMocks.search,
+  QdrantClient: class MockQdrantClient {
+    constructor(args: unknown) {
+      qdrantMocks.constructorArgs(args)
     }
-  }),
+
+    upsert = qdrantMocks.upsert
+    search = qdrantMocks.search
+  },
 }))
 
 import { AccordionComposer } from '../src/composer'

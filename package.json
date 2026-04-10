@@ -87,12 +87,12 @@
   },
   "devDependencies": {
     "@qdrant/js-client-rest": "^1.9.0",
-    "@types/node": "^20.0.0",
+    "@types/node": "^20.19.39",
     "@types/uuid": "^9.0.0",
-    "@vitest/coverage-v8": "^1.6.1",
+    "@vitest/coverage-v8": "^4.1.4",
     "tsup": "^8.0.0",
     "typescript": "^5.0.0",
-    "vitest": "^1.0.0"
+    "vitest": "^4.1.4"
   },
   "engines": {
     "node": ">=18",

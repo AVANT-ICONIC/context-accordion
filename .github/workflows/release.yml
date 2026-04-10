@@ -1,0 +1,76 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Git ref to publish from
+        required: true
+        default: main
+        type: string
+      npm_tag:
+        description: npm dist-tag to publish under
+        required: true
+        default: alpha
+        type: choice
+        options:
+          - alpha
+          - beta
+          - latest
+      dry_run:
+        description: Run publish as a dry run
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: release-${{ github.ref }}-${{ inputs.npm_tag }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      - name: Validate version and release tag
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "Publishing version: $VERSION"
+          if [[ "$VERSION" == *-* && "${{ inputs.npm_tag }}" == "latest" ]]; then
+            echo "Pre-release versions must not be published with the latest tag."
+            exit 1
+          fi
+          if [[ "$VERSION" != *-* && "${{ inputs.npm_tag }}" != "latest" ]]; then
+            echo "Stable versions should publish with the latest tag."
+            exit 1
+          fi
+
+      - run: npm run verify
+
+      - name: Publish dry run
+        if: ${{ inputs.dry_run }}
+        run: npm publish --access public --tag ${{ inputs.npm_tag }} --dry-run
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish package
+        if: ${{ !inputs.dry_run }}
+        run: npm publish --access public --tag ${{ inputs.npm_tag }} --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

@@ -1,57 +1,60 @@
 /**
- * @file context-accordion — Public API entry point
- * 
- * ## ⚠️ Alpha Status
- * This package is in **alpha** status (version 0.x.x). The API may change in 
+ * @file context-accordion - Public API entry point
+ *
+ * Alpha status:
+ * This package is in alpha status (version 0.x.x). The API may change in
  * breaking ways between minor releases until we reach 1.0.0 stability.
- * 
- * **For Harbor integration stability, pin to a specific version tag.**
- * 
- * ## Public API Surface
- * 
- * ### Stable (recommended for use)
- * - `AccordionComposer` — Main composition class
+ *
+ * For Harbor integration stability, pin to a specific version tag.
+ *
+ * Public API surface:
+ *
+ * Stable (recommended for use):
+ * - `AccordionComposer` - Main composition class
+ * - `accordionTraceToMarkdown` - Debug renderer for bundle trace output
  * - Types: AccordionBundle, AccordionPacket, AgentConfig, TaskContext, etc.
- * - `OllamaEmbedding`, `OpenAIEmbedding` — Embedding providers
- * 
- * ### Alpha (may change without notice) — Use with caution
- * - `enforceBudget`, `estimateTokens`, `TIER_PRIORITY` — Budget utilities
- * - `distill` — Experience distillation module
- * 
- * ### Internal (do not use directly)
+ * - `OllamaEmbedding`, `OpenAIEmbedding` - Embedding providers
+ *
+ * Alpha (may change without notice):
+ * - `enforceBudget`, `estimateTokens`, `TIER_PRIORITY` - Budget utilities
+ * - `distill` - Experience distillation module
+ *
+ * Internal (do not use directly):
  * - Private methods on AccordionComposer
  * - Static cache state (`AccordionComposer.cache`)
  * - Unexported types and functions
- * 
- * ## Wrapper Boundary — Framework Integration
- * 
- * Framework adapters are the **official integration boundary** for external 
- * frameworks and Harbor consumers. Use these instead of manually processing AccordionBundle:
- * 
+ *
+ * Wrapper boundary - Framework integration:
+ *
+ * Framework adapters are the official integration boundary for external
+ * frameworks and Harbor consumers. Use these instead of manually processing
+ * `AccordionBundle`.
+ *
  * | Subpath | Export | Purpose |
  * |---------|--------|---------|
  * | `context-accordion/ai-sdk` | `accordionSystemPrompt(bundle)` | Renders bundle for Vercel AI SDK |
  * | `context-accordion/langchain` | `toDocuments(bundle)`, `toSystemMessage(bundle)` | LangChain integration |
  * | `context-accordion/distill` | `distill(options)` | Experience distillation |
  * | `context-accordion/embeddings` | `OllamaEmbedding`, `OpenAIEmbedding` | Embedding providers |
- * 
- * The core `AccordionComposer` is framework-agnostic. Framework integrations 
- * and Harbor wrappers MUST use these adapters rather than processing bundles directly.
- * 
- * **Harbor Integration Rule:** Do not access `bundle.packets` directly. Use adapters.
- * 
+ *
+ * The core `AccordionComposer` is framework-agnostic. Framework integrations
+ * and Harbor wrappers must use these adapters rather than processing bundles
+ * directly.
+ *
+ * Harbor integration rule: do not access `bundle.packets` directly. Use adapters.
+ *
  * @packageDocumentation
  */
 
-// context-accordion — public API
-// Alpha release (0.x.x) — API may change in breaking ways until 1.0.0
+// context-accordion - public API
+// Alpha release (0.x.x) - API may change in breaking ways until 1.0.0
 
 export { AccordionComposer } from './composer'
 export {
   /**
    * @alpha
-   * Token budget enforcement. Enforces maxTokens by dropping/truncating lower-priority packets.
-   * May change without notice until 1.0.0.
+   * Token budget enforcement. Enforces maxTokens by dropping or truncating
+   * lower-priority packets. May change without notice until 1.0.0.
    */
   enforceBudget,
   /**

@@ -17,11 +17,11 @@
 
 - [x] Raise overall coverage above 90 percent.
 - [x] Add docs for trace output, cache controls, tokenizer support, and new package scripts.
-- [ ] Decide which currently alpha helpers should stay alpha vs move toward stable.
+- [x] Decide which currently alpha helpers should stay alpha vs move toward stable.
 - [x] Add consumer smoke tests that import the built package from a temp project.
-- [ ] Audit and upgrade vulnerable dev dependencies, especially the Vitest/Vite chain.
-- [ ] Add a release workflow that tags, verifies, and publishes only from a clean green build.
-- [ ] Verify README and API.md wording around error handling now that inputs are normalized and traces exist.
+- [x] Audit and upgrade vulnerable dev dependencies, especially the Vitest/Vite chain.
+- [x] Add a release workflow that tags, verifies, and publishes only from a clean green build.
+- [x] Verify README and API.md wording around error handling now that inputs are normalized and traces exist.
 
 ## Retrieval control plane
 
