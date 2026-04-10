@@ -64,12 +64,13 @@
   ],
   "scripts": {
     "build": "tsup",
+    "smoke:consumer": "node ./scripts/smoke-consumer.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "coverage": "vitest run --coverage",
     "pack:check": "npm pack --dry-run",
-    "verify": "npm run build && npm run typecheck && npm run test && npm run coverage && npm run pack:check",
+    "verify": "npm run build && npm run smoke:consumer && npm run typecheck && npm run test && npm run coverage && npm run pack:check",
     "prepack": "npm run build",
     "prepublishOnly": "npm run verify"
   },

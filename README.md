@@ -48,7 +48,6 @@
 ---
 
 ## The Problem
-
 Every AI agent framework today does one of two things:
 
 1. **Dump everything** — shove the full history, full codebase, full goal tree into every prompt. Expensive, slow, hits context limits fast.
@@ -312,6 +311,18 @@ new AccordionComposer(config?)
 - `index(options)` — Store task in archive
 - `clearSessionCache()` — Clear session cache
 
+Additional runtime helpers:
+
+- `AccordionComposer.clearGlobalCache()` - Clear the shared static cache
+- `accordionTraceToMarkdown(bundle)` - Render trace/debug output as markdown
+
+### Bundle Observability
+
+Every composed bundle now includes:
+
+- `bundle.trace` - selection, cache, expand, and budget events
+- `packet.metadata` - packet source, selection reason, and optional score
+
 ---
 
 ## Contributing
@@ -322,7 +333,7 @@ PRs and issues welcome. Please open an [issue](https://github.com/AVANT-ICONIC/c
 git clone https://github.com/AVANT-ICONIC/context-accordion.git
 cd context-accordion
 npm install
-npm run test
+npm run verify
 ```
 
 ---
@@ -347,3 +358,5 @@ Built by [AVANT-ICONIC](https://avant-iconic.com). Inspired by the problem of ag
 <img src="https://capsule-render.vercel.app/api?type=waving&section=footer&height=130&color=0:f59e0b,50:ea580c,100:000000" alt="Footer" width="100%" />
 
 </div>
+
+

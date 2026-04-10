@@ -39,6 +39,7 @@ describe('accordionTraceToMarkdown', () => {
         tier: 'repo',
         source: 'repo',
         reason: 'Truncated during budget enforcement.',
+        score: 0.91,
       }),
     ])
 
@@ -48,6 +49,7 @@ describe('accordionTraceToMarkdown', () => {
     expect(markdown).toContain('compose/selected - task')
     expect(markdown).toContain('budget/truncated - repo')
     expect(markdown).toContain('Token estimate: 42')
+    expect(markdown).toContain('Score: 0.91')
   })
 
   it('renders a helpful empty-state message', () => {

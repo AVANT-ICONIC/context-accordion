@@ -60,6 +60,19 @@ import { AccordionComposer } from 'context-accordion'
 | `composer.render(bundle)` | Render bundle to string | Stable |
 | `composer.index(options)` | Index a task for archive retrieval | Stable |
 | `composer.clearSessionCache()` | Clear session cache | Stable |
+| `AccordionComposer.clearGlobalCache()` | Clear the shared static cache | Stable |
+
+### Core Config
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `maxTokens` | `number` | `8000` | Default token budget |
+| `cacheTtl` | `number` | `300000` | Shared static cache TTL in milliseconds |
+| `cacheMaxSize` | `number` | `1000` | Maximum shared static cache entries before eviction |
+| `tokenizer` | `(text) => number` | character heuristic | Custom token estimator used by compose, expand, and budgeting |
+| `vectorStore` | `VectorStoreConfig` | - | Optional Qdrant-backed archive configuration |
+| `embeddingProvider` | `EmbeddingProvider` | - | Provider used for archive indexing and retrieval |
+| `onExpand` | `(event) => void` | - | Callback invoked after expansion attempts |
 
 ### Types
 
@@ -68,6 +81,8 @@ import type {
   AccordionBundle,
   AccordionConfig,
   AccordionPacket,
+  AccordionPacketMetadata,
+  AccordionTraceEntry,
   AgentConfig,
   ComposeOptions,
   ExpandOptions,
@@ -84,6 +99,16 @@ import type {
 ```
 
 All exported types are considered stable.
+
+### Debug Helpers
+
+```typescript
+import { accordionTraceToMarkdown } from 'context-accordion'
+```
+
+| Export | Description | Stability |
+|--------|-------------|-----------|
+| `accordionTraceToMarkdown(bundle)` | Render bundle trace/debug output as markdown | Stable |
 
 ### Embedding Providers
 
@@ -181,7 +206,7 @@ The public API handles errors gracefully:
 
 | Method | Error Behavior |
 |--------|---------------|
-| `compose()` | Never throws; returns bundle with available tiers |
+| `compose()` | Never throws; normalizes malformed input and returns the tiers that could be assembled |
 | `expand()` | Never throws; returns original bundle with logged event |
 | `index()` | Silently skips if vector store not configured |
 | `render()` | Never throws |
@@ -195,7 +220,20 @@ The composer uses two cache layers:
 1. **Static cache** (cross-instance): Identity and experience packets are cached by content hash
 2. **Session cache** (per-instance): Expand results are cached within a session
 
-Cache behavior is an implementation detail and may change. Use `clearSessionCache()` to reset session-level caching.
+Use `clearSessionCache()` to reset session-level caching and `AccordionComposer.clearGlobalCache()` to reset the shared static cache.
+
+---
+
+## Traceability
+
+Every `AccordionBundle` includes a `trace` array that records:
+
+- packet selection during `compose()`
+- cache hits during `compose()` and `expand()`
+- skipped expansions
+- budget truncation and drops
+
+Each `AccordionPacket` may also include `metadata` describing its source, selection reason, and optional retrieval score.
 
 ---
 
