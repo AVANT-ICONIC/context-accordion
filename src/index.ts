@@ -77,6 +77,8 @@ export type {
   AccordionPacketMetadata,
   AccordionTraceEntry,
   AgentConfig,
+  ArchiveScope,
+  ArchiveScopeVisibility,
   ComposeOptions,
   ExpandOptions,
   ExpansionEvent,

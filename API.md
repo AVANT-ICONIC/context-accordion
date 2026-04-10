@@ -87,6 +87,8 @@ import type {
   AccordionPacketMetadata,
   AccordionTraceEntry,
   AgentConfig,
+  ArchiveScope,
+  ArchiveScopeVisibility,
   ComposeOptions,
   ExpandOptions,
   ExpansionEvent,
@@ -107,6 +109,16 @@ import type {
 ```
 
 All exported types are considered stable.
+
+### Compose / Search Options
+
+| Option | Type | Applies To | Description |
+|--------|------|------------|-------------|
+| `includePriorTasks` | `boolean` | `compose()`, `searchAndCompose()` | Enables archive retrieval |
+| `priorTaskLimit` | `number` | `compose()`, `searchAndCompose()` | Archive result count before budget enforcement |
+| `archiveScope` | `ArchiveScope` | `compose()`, `searchAndCompose()` | Optional archive partition for retrieval |
+| `retrievalIntents` | `RetrievalIntent[]` | `searchAndCompose()` | Explicit retrieval plan override |
+| `maxTokens` | `number` | `compose()`, `searchAndCompose()`, `generateWakeup()` | Token budget for the rendered output |
 
 ### Debug Helpers
 
@@ -129,6 +141,18 @@ const wakeup = composer.generateWakeup(bundle, {
 ```
 
 Wake-up rendering keeps identity and task detail, compresses lower-priority tiers to summaries, and can include recent retrieval and budget decisions.
+
+### Scoped Archive Memory
+
+`compose()`, `searchAndCompose()`, `planRetrieval()`, and `index()` all accept optional archive scope metadata.
+
+Supported scopes:
+
+- `global`
+- `agent`
+- `project`
+
+Agent scopes are resolved against the active agent id when possible. Project scopes are resolved against `task.projectId` when possible.
 
 ### Embedding Providers
 

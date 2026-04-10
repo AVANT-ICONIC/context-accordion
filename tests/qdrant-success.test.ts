@@ -80,6 +80,38 @@ describe('Qdrant success paths', () => {
     )
   })
 
+  it('indexes scoped archive metadata when a scope is provided', async () => {
+    qdrantMocks.upsert.mockResolvedValue(undefined)
+
+    const composer = new AccordionComposer({
+      vectorStore,
+      embeddingProvider,
+    })
+
+    await composer.index({
+      taskId: 'scoped-task',
+      content: 'Resolved a project-specific auth outage.',
+      scope: {
+        visibility: 'agent',
+        agentId: 'builder',
+      },
+    })
+
+    expect(qdrantMocks.upsert).toHaveBeenCalledWith(
+      'tasks',
+      expect.objectContaining({
+        points: [
+          expect.objectContaining({
+            payload: expect.objectContaining({
+              scopeVisibility: 'agent',
+              scopeAgentId: 'builder',
+            }),
+          }),
+        ],
+      }),
+    )
+  })
+
   it('retrieves archive packets and records metadata when qdrant returns matches', async () => {
     qdrantMocks.search.mockResolvedValue([
       {
@@ -232,5 +264,62 @@ describe('Qdrant success paths', () => {
         with_payload: true,
       }),
     )
+  })
+
+  it('applies project scope filters during archive retrieval', async () => {
+    qdrantMocks.search.mockResolvedValue([
+      {
+        id: 'prior-task-1',
+        score: 0.91,
+        payload: {
+          title: 'Project auth incident',
+          content: 'The auth-platform project had the same forced logout regression.',
+        },
+      },
+    ])
+
+    const composer = new AccordionComposer({
+      vectorStore,
+      embeddingProvider,
+    })
+
+    const bundle = await composer.searchAndCompose(
+      {
+        id: 'builder',
+        identity: 'You are a senior software engineer.',
+      },
+      {
+        id: 'task-archive',
+        title: 'Fix session expiry',
+        description: 'Users are logged out after five minutes.',
+        projectId: 'auth-platform',
+      },
+      {
+        retrievalIntents: [
+          {
+            target: 'archive',
+            query: 'auth-platform incidents with forced logout',
+            priority: 60,
+            reason: 'Search only project-local incidents first.',
+            scope: {
+              visibility: 'project',
+            },
+          },
+        ],
+      },
+    )
+
+    expect(qdrantMocks.search).toHaveBeenCalledWith(
+      'tasks',
+      expect.objectContaining({
+        filter: expect.objectContaining({
+          must: expect.arrayContaining([
+            { key: 'scopeVisibility', match: { value: 'project' } },
+            { key: 'scopeProjectId', match: { value: 'auth-platform' } },
+          ]),
+        }),
+      }),
+    )
+    expect(bundle.trace.some(entry => entry.scope === 'project:auth-platform')).toBe(true)
   })
 })

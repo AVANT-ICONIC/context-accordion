@@ -38,6 +38,7 @@ describe('accordionTraceToMarkdown', () => {
         reason: 'Plan archive retrieval before compose.',
         query: 'similar auth incidents',
         priority: 70,
+        scope: 'project:auth-platform',
       }),
       makeTraceEntry({
         stage: 'budget',
@@ -58,6 +59,7 @@ describe('accordionTraceToMarkdown', () => {
     expect(markdown).toContain('Score: 0.91')
     expect(markdown).toContain('Query: similar auth incidents')
     expect(markdown).toContain('Priority: 70')
+    expect(markdown).toContain('Scope: project:auth-platform')
   })
 
   it('renders a helpful empty-state message', () => {

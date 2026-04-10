@@ -32,6 +32,7 @@ export interface AccordionTraceEntry {
   score?: number
   query?: string
   priority?: number
+  scope?: string
 }
 
 export interface AccordionBundle {
@@ -66,6 +67,7 @@ export interface TaskContext {
   priority?: string
   type?: string
   owner?: string
+  projectId?: string
   requirements?: string[]
   goal?: GoalContext
   repo?: RepoContext
@@ -99,9 +101,18 @@ export interface ComposeOptions {
   maxTokens?: number
   includePriorTasks?: boolean     // triggers L3 archive retrieval
   priorTaskLimit?: number         // how many prior tasks to retrieve (default: 3)
+  archiveScope?: ArchiveScope
 }
 
 export type RetrievalIntentTarget = 'experience' | 'archive'
+
+export type ArchiveScopeVisibility = 'global' | 'agent' | 'project'
+
+export interface ArchiveScope {
+  visibility: ArchiveScopeVisibility
+  agentId?: string
+  projectId?: string
+}
 
 export interface RetrievalIntent {
   target: RetrievalIntentTarget
@@ -109,6 +120,7 @@ export interface RetrievalIntent {
   priority: number
   reason: string
   limit?: number
+  scope?: ArchiveScope
 }
 
 export interface SearchComposeOptions extends ComposeOptions {
@@ -157,6 +169,7 @@ export interface IndexTaskOptions {
   taskId: string
   content: string
   metadata?: Record<string, unknown>
+  scope?: ArchiveScope
 }
 
 export interface ExpandOptions {

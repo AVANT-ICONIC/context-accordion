@@ -92,7 +92,7 @@ The public API is exported from the main entry point and subpath exports.
 | `AccordionComposer` | Main class for context composition and planned retrieval |
 | `accordionTraceToMarkdown` | Debug renderer for bundle trace output |
 | `OllamaEmbedding`, `OpenAIEmbedding` | Embedding providers |
-| Types (AccordionBundle, AccordionPacket, AgentConfig, TaskContext, RetrievalIntent, WakeupOptions, etc.) | TypeScript interfaces |
+| Types (AccordionBundle, AccordionPacket, AgentConfig, TaskContext, RetrievalIntent, ArchiveScope, WakeupOptions, etc.) | TypeScript interfaces |
 
 ### Alpha (may change until 1.0.0)
 | Export | Description |
@@ -245,6 +245,31 @@ const wakeup = composer.generateWakeup(plannedBundle, {
 ```
 
 This keeps identity and task detail, compresses the rest to summaries, and can optionally include recent retrieval and budget decisions.
+
+### Scoped Archive Memory
+
+Archive indexing and retrieval can be partitioned by scope:
+
+```typescript
+await composer.index({
+  taskId: 'task-123',
+  content: 'Resolved the auth-platform forced logout regression.',
+  scope: {
+    visibility: 'project',
+    projectId: 'auth-platform',
+  },
+})
+
+const scopedBundle = await composer.searchAndCompose(agent, task, {
+  includePriorTasks: true,
+  archiveScope: {
+    visibility: 'project',
+    projectId: 'auth-platform',
+  },
+})
+```
+
+Supported scopes are `global`, `agent`, and `project`.
 
 ---
 

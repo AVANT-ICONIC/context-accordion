@@ -10,6 +10,7 @@ import type {
   AccordionPacket,
   AccordionTraceEntry,
   AgentConfig,
+  ArchiveScope,
   ComposeOptions,
   ExpandOptions,
   ExpansionEvent,
@@ -105,8 +106,11 @@ export class AccordionComposer {
       await this.appendArchivePacket(
         packets,
         trace,
+        input.normalizedAgent,
         input.normalizedTask,
         this.normalizePositiveInteger(options.priorTaskLimit) ?? 3,
+        undefined,
+        options.archiveScope,
       )
     }
 
@@ -139,13 +143,22 @@ export class AccordionComposer {
       })
     }
 
-    if (options.includePriorTasks === true && this.config.vectorStore && this.config.embeddingProvider) {
+    const archiveScopeRequested = options.archiveScope !== undefined
+    const archiveScope = this.resolveArchiveScope(options.archiveScope, input.normalizedAgent, input.normalizedTask)
+
+    if (
+      options.includePriorTasks === true
+      && this.config.vectorStore
+      && this.config.embeddingProvider
+      && (!archiveScopeRequested || archiveScope)
+    ) {
       intents.push({
         target: 'archive',
         query: this.buildRetrievalQuery(input.normalizedTask, 'archive'),
         priority: 70,
         reason: 'Similar prior tasks were requested and the vector archive is available.',
         limit: archiveLimit,
+        scope: archiveScope,
       })
     }
 
@@ -174,7 +187,20 @@ export class AccordionComposer {
       archiveLimit,
     )
 
-    trace.push(...intents.map(intent => this.createIntentTraceEntry('plan', 'selected', intent, intent.reason)))
+    trace.push(...intents.map(intent => {
+      const scope =
+        intent.target === 'archive'
+          ? this.resolveArchiveScope(intent.scope, input.normalizedAgent, input.normalizedTask)
+          : undefined
+
+      return this.createIntentTraceEntry(
+        'plan',
+        'selected',
+        intent,
+        intent.reason,
+        scope ? this.describeArchiveScope(scope) : undefined,
+      )
+    }))
 
     let experienceLoaded = false
 
@@ -193,9 +219,11 @@ export class AccordionComposer {
       await this.appendArchivePacket(
         packets,
         trace,
+        input.normalizedAgent,
         input.normalizedTask,
         intent.limit ?? archiveLimit,
         intent,
+        intent.scope,
       )
     }
 
@@ -319,18 +347,29 @@ export class AccordionComposer {
   private async appendArchivePacket(
     packets: AccordionPacket[],
     trace: AccordionTraceEntry[],
+    agent: AgentConfig,
     task: TaskContext,
     limit: number,
     intent?: RetrievalIntent,
+    requestedScope?: ArchiveScope,
   ): Promise<boolean> {
-    const result = await this.retrieveArchive(task, limit, intent?.query)
+    const resolvedScope = this.resolveArchiveScope(requestedScope, agent, task)
+    if (requestedScope && !resolvedScope) {
+      const scopeLabel = this.describeArchiveScope(requestedScope)
+      if (intent) {
+        trace.push(this.createIntentTraceEntry('compose', 'skipped', intent, 'Planned archive retrieval was skipped because the requested scope could not be resolved.', scopeLabel))
+      }
+      return false
+    }
+
+    const result = await this.retrieveArchive(task, limit, intent?.query, resolvedScope)
     if (!result.packet) {
       if (intent) {
         const unavailableReason =
           !this.config.vectorStore || !this.config.embeddingProvider
             ? 'Skipped planned archive retrieval because the vector archive is not configured.'
             : 'Planned archive retrieval returned no matches.'
-        trace.push(this.createIntentTraceEntry('compose', 'skipped', intent, unavailableReason))
+        trace.push(this.createIntentTraceEntry('compose', 'skipped', intent, unavailableReason, resolvedScope ? this.describeArchiveScope(resolvedScope) : undefined))
       }
       return false
     }
@@ -342,13 +381,18 @@ export class AccordionComposer {
         'selected',
         result.packet,
         intent
-          ? 'Retrieved similar prior tasks for the planned archive intent.'
-          : 'Retrieved similar prior tasks from the archive.',
+          ? `Retrieved similar prior tasks for the planned archive intent${resolvedScope ? ` within the ${this.describeArchiveScope(resolvedScope)} scope` : ''}.`
+          : `Retrieved similar prior tasks from the archive${resolvedScope ? ` within the ${this.describeArchiveScope(resolvedScope)} scope` : ''}.`,
         'archive-search',
         intent,
       ),
     )
-    trace.push(...this.createArchiveMatchTraceEntries(result.matches, result.query, intent))
+    trace.push(...this.createArchiveMatchTraceEntries(
+      result.matches,
+      result.query,
+      intent,
+      resolvedScope ? this.describeArchiveScope(resolvedScope) : undefined,
+    ))
     return true
   }
 
@@ -676,6 +720,11 @@ export class AccordionComposer {
   async index(options: IndexTaskOptions): Promise<void> {
     if (!this.config.vectorStore || !this.config.embeddingProvider) return
 
+    const resolvedScope = this.resolveArchiveScope(options.scope)
+    if (options.scope && !resolvedScope) {
+      return
+    }
+
     const embedding = await this.config.embeddingProvider.embed(options.content)
 
     // Dynamic import — qdrant is an optional peer dep
@@ -693,6 +742,7 @@ export class AccordionComposer {
           taskId: options.taskId,
           content: options.content,
           indexedAt: new Date().toISOString(),
+          ...(resolvedScope ? this.buildArchiveScopePayload(resolvedScope) : {}),
         },
       }],
     })
@@ -738,6 +788,7 @@ export class AccordionComposer {
           `${entry.stage}/${entry.action} ${entry.tier}: ${entry.reason}`,
           entry.query ? `query=${entry.query}` : '',
           entry.priority !== undefined ? `priority=${entry.priority}` : '',
+          entry.scope ? `scope=${entry.scope}` : '',
         ].filter(Boolean)
 
         return `- ${details.join(' | ')}`
@@ -916,7 +967,8 @@ export class AccordionComposer {
   private async retrieveArchive(
     task: TaskContext,
     limit: number,
-    queryOverride?: string
+    queryOverride?: string,
+    scope?: ArchiveScope
   ): Promise<ArchiveRetrievalResult> {
     if (!this.config.vectorStore || !this.config.embeddingProvider) {
       return { packet: null, matches: [], query: '' }
@@ -933,10 +985,12 @@ export class AccordionComposer {
       const client = new QdrantClient({ url: this.config.vectorStore.url, checkCompatibility: false })
       const collection = this.config.vectorStore.collection ?? 'tasks'
 
+      const must = this.buildArchiveScopeFilter(scope)
       const results = await client.search(collection, {
         vector: embedding,
         limit: limit + 1,
         filter: {
+          ...(must.length > 0 ? { must } : {}),
           must_not: [{ key: 'taskId', match: { value: task.id } }],
         },
         with_payload: true,
@@ -1076,6 +1130,84 @@ export class AccordionComposer {
     }
   }
 
+  private resolveArchiveScope(
+    scope?: ArchiveScope,
+    agent?: AgentConfig,
+    task?: TaskContext,
+  ): ArchiveScope | undefined {
+    if (!scope) {
+      return undefined
+    }
+
+    if (scope.visibility === 'agent') {
+      const agentId = this.normalizeOptionalString(scope.agentId) ?? agent?.id
+      if (!agentId) {
+        return undefined
+      }
+
+      return {
+        visibility: 'agent',
+        agentId,
+      }
+    }
+
+    if (scope.visibility === 'project') {
+      const projectId = this.normalizeOptionalString(scope.projectId) ?? task?.projectId
+      if (!projectId) {
+        return undefined
+      }
+
+      return {
+        visibility: 'project',
+        projectId,
+      }
+    }
+
+    return {
+      visibility: 'global',
+    }
+  }
+
+  private describeArchiveScope(scope: ArchiveScope): string {
+    if (scope.visibility === 'agent') {
+      return `agent:${scope.agentId ?? 'unknown'}`
+    }
+
+    if (scope.visibility === 'project') {
+      return `project:${scope.projectId ?? 'unknown'}`
+    }
+
+    return 'global'
+  }
+
+  private buildArchiveScopePayload(scope: ArchiveScope): Record<string, string> {
+    return {
+      scopeVisibility: scope.visibility,
+      ...(scope.agentId ? { scopeAgentId: scope.agentId } : {}),
+      ...(scope.projectId ? { scopeProjectId: scope.projectId } : {}),
+    }
+  }
+
+  private buildArchiveScopeFilter(scope?: ArchiveScope): Array<Record<string, unknown>> {
+    if (!scope) {
+      return []
+    }
+
+    const filters: Array<Record<string, unknown>> = [
+      { key: 'scopeVisibility', match: { value: scope.visibility } },
+    ]
+
+    if (scope.agentId) {
+      filters.push({ key: 'scopeAgentId', match: { value: scope.agentId } })
+    }
+
+    if (scope.projectId) {
+      filters.push({ key: 'scopeProjectId', match: { value: scope.projectId } })
+    }
+
+    return filters
+  }
+
   private buildRetrievalQuery(task: TaskContext, target: RetrievalIntent['target']): string {
     const parts = [
       task.title,
@@ -1083,6 +1215,7 @@ export class AccordionComposer {
       task.type ? `type: ${task.type}` : undefined,
       task.priority ? `priority: ${task.priority}` : undefined,
       task.owner ? `owner: ${task.owner}` : undefined,
+      task.projectId ? `project: ${task.projectId}` : undefined,
       task.goal?.title ? `goal: ${task.goal.title}` : undefined,
       task.repo?.name ? `repo: ${task.repo.name}` : undefined,
       task.requirements?.length ? `requirements: ${task.requirements.join('; ')}` : undefined,
@@ -1120,6 +1253,7 @@ export class AccordionComposer {
           limit: target === 'archive'
             ? this.normalizePositiveInteger(intent.limit) ?? defaultArchiveLimit
             : undefined,
+          scope: intent.scope,
         }
       })
       .sort((left, right) => right.priority - left.priority)
@@ -1129,6 +1263,7 @@ export class AccordionComposer {
     matches: ArchiveSearchMatch[],
     query: string,
     intent?: RetrievalIntent,
+    scope?: string,
   ): AccordionTraceEntry[] {
     return matches.map((match, index) => ({
       timestamp: new Date(),
@@ -1140,6 +1275,7 @@ export class AccordionComposer {
       score: match.score,
       query: query || intent?.query,
       priority: intent?.priority,
+      scope,
     }))
   }
 
@@ -1148,6 +1284,7 @@ export class AccordionComposer {
     action: AccordionTraceEntry['action'],
     intent: RetrievalIntent,
     reason: string,
+    scope?: string,
   ): AccordionTraceEntry {
     return {
       timestamp: new Date(),
@@ -1158,6 +1295,7 @@ export class AccordionComposer {
       reason,
       query: intent.query,
       priority: intent.priority,
+      scope,
     }
   }
 
@@ -1225,6 +1363,7 @@ export class AccordionComposer {
       priority: this.normalizeOptionalString(candidate.priority),
       type: this.normalizeOptionalString(candidate.type),
       owner: this.normalizeOptionalString(candidate.owner),
+      projectId: this.normalizeOptionalString(candidate.projectId),
       requirements: this.normalizeStringArray(candidate.requirements),
       goal: candidate.goal ? this.normalizeGoalContext(candidate.goal) : undefined,
       repo: candidate.repo ? this.normalizeRepoContext(candidate.repo) : undefined,

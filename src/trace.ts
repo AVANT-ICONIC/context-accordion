@@ -42,6 +42,10 @@ export function accordionTraceToMarkdown(
       lines.push(`- Priority: ${entry.priority}`)
     }
 
+    if (entry.scope) {
+      lines.push(`- Scope: ${entry.scope}`)
+    }
+
     return lines.join('\n')
   })
 
